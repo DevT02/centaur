@@ -26,6 +26,10 @@ struct Args {
     /// Fallback to a local LLM via Ollama if the deterministic patch fails. Use 'auto' to automatically select the best model based on your system RAM.
     #[arg(short, long)]
     llm: Option<String>,
+
+    /// Pack a directory into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
+    #[arg(short, long)]
+    pack: Option<String>,
 }
 
 fn resolve_auto_llm() -> String {
@@ -120,6 +124,43 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
 
 fn main() {
     let args = Args::parse();
+
+    if let Some(dir) = args.pack {
+        println!("📦 Packing directory: {}...", dir);
+        let mut packed_content = String::new();
+        packed_content.push_str("Here is my codebase:\n\n");
+        let mut file_count = 0;
+
+        let walker = ignore::WalkBuilder::new(&dir).build();
+        for result in walker {
+            match result {
+                Ok(entry) => {
+                    if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                        let path = entry.path();
+                        if let Ok(content) = fs::read_to_string(path) {
+                            packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", path.display(), content));
+                            file_count += 1;
+                        }
+                    }
+                }
+                Err(err) => eprintln!("Error reading file: {}", err),
+            }
+        }
+        
+        packed_content.push_str("\nPlease suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format.");
+        
+        match Clipboard::new() {
+            Ok(mut cb) => {
+                if let Err(e) = cb.set_text(packed_content) {
+                    eprintln!("❌ Failed to write to clipboard: {}", e);
+                } else {
+                    println!("✅ Successfully packed {} files into your clipboard! Ready to paste into ChatGPT.", file_count);
+                }
+            },
+            Err(e) => eprintln!("❌ Failed to initialize clipboard: {}", e),
+        }
+        return;
+    }
 
     let input = if args.clipboard {
         println!("Reading patch instructions from the clipboard...");
