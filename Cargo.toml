@@ -10,3 +10,10 @@ regex = "1.12.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
