@@ -27,12 +27,13 @@ struct Args {
     #[arg(short, long)]
     llm: Option<String>,
 
-    /// Pack a directory into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
-    #[arg(short, long)]
-    pack: Option<String>,
+    /// Pack files/directories into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
+    #[arg(short, long, num_args = 1..)]
+    pack: Option<Vec<String>>,
 }
 
 fn resolve_auto_llm() -> String {
+// ... (rest of resolve_auto_llm remains unchanged) ...
     let mut sys = System::new_all();
     sys.refresh_all();
     // memory is in bytes
@@ -53,8 +54,8 @@ fn resolve_auto_llm() -> String {
     model.to_string()
 }
 
-
 fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str) -> bool {
+// ... (rest of apply_with_llm remains unchanged) ...
     let file_path = std::path::Path::new(file_path_str);
     let content = fs::read_to_string(file_path).unwrap_or_default();
     
@@ -125,30 +126,53 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
 fn main() {
     let args = Args::parse();
 
-    if let Some(dir) = args.pack {
-        println!("📦 Packing directory: {}...", dir);
+    if let Some(paths) = args.pack {
+        println!("📦 Packing {} targets...", paths.len());
         let mut packed_content = String::new();
         packed_content.push_str("Here is my codebase:\n\n");
         let mut file_count = 0;
 
-        let walker = ignore::WalkBuilder::new(&dir).build();
-        for result in walker {
-            match result {
-                Ok(entry) => {
-                    if entry.file_type().map_or(false, |ft| ft.is_file()) {
-                        let path = entry.path();
-                        if let Ok(content) = fs::read_to_string(path) {
-                            packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", path.display(), content));
-                            file_count += 1;
+        for path_str in paths {
+            let path = std::path::Path::new(&path_str);
+            if path.is_file() {
+                 if let Ok(content) = fs::read_to_string(path) {
+                    packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", path.display(), content));
+                    file_count += 1;
+                }
+            } else if path.is_dir() {
+                let walker = ignore::WalkBuilder::new(path).build();
+                for result in walker {
+                    match result {
+                        Ok(entry) => {
+                            if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                                let file_path = entry.path();
+                                if let Ok(content) = fs::read_to_string(file_path) {
+                                    packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", file_path.display(), content));
+                                    file_count += 1;
+                                }
+                            }
                         }
+                        Err(err) => eprintln!("Error reading file: {}", err),
                     }
                 }
-                Err(err) => eprintln!("Error reading file: {}", err),
+            } else {
+                eprintln!("Warning: Path does not exist or is inaccessible: {}", path_str);
             }
         }
         
         packed_content.push_str("\nPlease suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format.");
         
+        // Very basic chunking logic if clipboard gets too massive (e.g. over 500k chars ~ 125k tokens roughly)
+        if packed_content.len() > 500_000 {
+            println!("⚠️ Warning: Packed output is massive ({} chars). Writing to 'centaur_packed_context.txt' instead of clipboard to avoid clipboard limits/freezes.", packed_content.len());
+            if let Err(e) = fs::write("centaur_packed_context.txt", &packed_content) {
+                eprintln!("❌ Failed to write fallback file: {}", e);
+            } else {
+                println!("✅ Packed {} files into 'centaur_packed_context.txt'. Open this file and copy it in chunks if necessary.", file_count);
+            }
+            return;
+        }
+
         match Clipboard::new() {
             Ok(mut cb) => {
                 if let Err(e) = cb.set_text(packed_content) {
