@@ -128,60 +128,100 @@ fn main() {
 
     if let Some(paths) = args.pack {
         println!("📦 Packing {} targets...", paths.len());
-        let mut packed_content = String::new();
-        packed_content.push_str("Here is my codebase:\n\n");
-        let mut file_count = 0;
-
-        for path_str in paths {
-            let path = std::path::Path::new(&path_str);
+        
+        // Collect all files first
+        let mut files_to_pack = Vec::new();
+        for path_str in &paths {
+            let path = std::path::Path::new(path_str);
             if path.is_file() {
-                 if let Ok(content) = fs::read_to_string(path) {
-                    packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", path.display(), content));
-                    file_count += 1;
-                }
+                files_to_pack.push(path.to_path_buf());
             } else if path.is_dir() {
                 let walker = ignore::WalkBuilder::new(path).build();
                 for result in walker {
-                    match result {
-                        Ok(entry) => {
-                            if entry.file_type().map_or(false, |ft| ft.is_file()) {
-                                let file_path = entry.path();
-                                if let Ok(content) = fs::read_to_string(file_path) {
-                                    packed_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", file_path.display(), content));
-                                    file_count += 1;
-                                }
-                            }
+                    if let Ok(entry) = result {
+                        if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                            files_to_pack.push(entry.path().to_path_buf());
                         }
-                        Err(err) => eprintln!("Error reading file: {}", err),
                     }
                 }
             } else {
                 eprintln!("Warning: Path does not exist or is inaccessible: {}", path_str);
             }
         }
-        
-        packed_content.push_str("\nPlease suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format.");
-        
-        // Very basic chunking logic if clipboard gets too massive (e.g. over 500k chars ~ 125k tokens roughly)
-        if packed_content.len() > 500_000 {
-            println!("⚠️ Warning: Packed output is massive ({} chars). Writing to 'centaur_packed_context.txt' instead of clipboard to avoid clipboard limits/freezes.", packed_content.len());
-            if let Err(e) = fs::write("centaur_packed_context.txt", &packed_content) {
-                eprintln!("❌ Failed to write fallback file: {}", e);
-            } else {
-                println!("✅ Packed {} files into 'centaur_packed_context.txt'. Open this file and copy it in chunks if necessary.", file_count);
+
+        const CHUNK_LIMIT: usize = 100_000; // ~25k tokens per chunk to safely fit ChatGPT web limits
+        let mut chunks: Vec<String> = Vec::new();
+        let mut current_chunk = String::new();
+        let mut total_files = 0;
+
+        for path in files_to_pack {
+            if let Ok(content) = fs::read_to_string(&path) {
+                // Ensure paths use forward slashes for AI consistency
+                let normalized_path = path.display().to_string().replace("\\", "/");
+                
+                // AI-optimized markdown structure
+                let file_str = format!("File: `{}`\n```\n{}\n```\n\n", normalized_path, content);
+                
+                if current_chunk.len() + file_str.len() > CHUNK_LIMIT && !current_chunk.is_empty() {
+                    chunks.push(current_chunk);
+                    current_chunk = String::new();
+                }
+                current_chunk.push_str(&file_str);
+                total_files += 1;
             }
+        }
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        let total_chunks = chunks.len();
+        if total_chunks == 0 {
+            println!("No readable text files found to pack.");
             return;
         }
 
-        match Clipboard::new() {
-            Ok(mut cb) => {
-                if let Err(e) = cb.set_text(packed_content) {
-                    eprintln!("❌ Failed to write to clipboard: {}", e);
-                } else {
-                    println!("✅ Successfully packed {} files into your clipboard! Ready to paste into ChatGPT.", file_count);
+        // Write chunks and apply system prompts
+        for (i, chunk) in chunks.iter_mut().enumerate() {
+            let part_num = i + 1;
+            let mut final_chunk = format!("(Part {} of {})\n\n", part_num, total_chunks);
+            final_chunk.push_str("Here is my codebase context:\n\n");
+            final_chunk.push_str(chunk);
+
+            if part_num == total_chunks {
+                final_chunk.push_str("\n\n(All parts provided. Please suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format. Do not output the entire file.)");
+            } else {
+                final_chunk.push_str("\n\n(End of Part {}. Do not analyze yet. Reply ONLY with 'Awaiting next part' until I send the final part.)");
+            }
+
+            *chunk = final_chunk;
+        }
+
+        if total_chunks == 1 {
+            match Clipboard::new() {
+                Ok(mut cb) => {
+                    if let Err(e) = cb.set_text(chunks[0].clone()) {
+                        eprintln!("❌ Failed to write to clipboard: {}", e);
+                    } else {
+                        println!("✅ Successfully packed {} files into your clipboard! Ready to paste into ChatGPT.", total_files);
+                    }
+                },
+                Err(e) => eprintln!("❌ Failed to initialize clipboard: {}", e),
+            }
+        } else {
+            println!("⚠️ Project is large. Split into {} chunks for ChatGPT Web.", total_chunks);
+            for (i, chunk) in chunks.iter().enumerate() {
+                let file_name = format!("centaur_packed_part{}.txt", i + 1);
+                if let Err(e) = fs::write(&file_name, chunk) {
+                    eprintln!("❌ Failed to write {}: {}", file_name, e);
                 }
-            },
-            Err(e) => eprintln!("❌ Failed to initialize clipboard: {}", e),
+            }
+            // Auto-copy part 1
+            if let Ok(mut cb) = Clipboard::new() {
+                let _ = cb.set_text(chunks[0].clone());
+            }
+            println!("✅ Saved {} parts to disk (e.g. centaur_packed_part1.txt).", total_chunks);
+            println!("📋 Part 1 has been automatically copied to your clipboard!");
+            println!("Paste Part 1 into ChatGPT, let it reply, then manually open and copy the remaining parts.");
         }
         return;
     }
