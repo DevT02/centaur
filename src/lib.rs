@@ -69,7 +69,6 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
                     current_search.clear();
                     state = State::InSearch;
                 } else if trimmed.starts_with("File:") || trimmed.starts_with("file:") || trimmed.starts_with("Path:") {
-                    // Reset if we see another file marker before search
                     let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
                     if parts.len() == 2 {
                         current_file = parts[1].trim().to_string();
@@ -80,8 +79,6 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
                 if trimmed == "=======" {
                     state = State::InReplace;
                     current_replace.clear();
-                    
-                    // Remove trailing newline from search
                     if current_search.ends_with('\n') {
                         current_search.pop();
                     }
@@ -92,7 +89,6 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
             }
             State::InReplace => {
                 if trimmed == ">>>>>>> REPLACE" {
-                    // Remove trailing newline from replace
                     if current_replace.ends_with('\n') {
                         current_replace.pop();
                     }
@@ -118,12 +114,12 @@ pub enum ApplyResult {
     Created(String),
     Updated(String),
     MatchNotFound(String),
+    AmbiguousMatch(String),
     IoError(String, String),
     SecurityError(String),
 }
 
 pub fn apply_block(base_dir: &Path, block: &PatchBlock) -> ApplyResult {
-    // Prevent path traversal
     if block.file_path.contains("..") {
         return ApplyResult::SecurityError(format!("Path traversal attempt detected: {}", block.file_path));
     }
@@ -143,58 +139,84 @@ pub fn apply_block(base_dir: &Path, block: &PatchBlock) -> ApplyResult {
         }
     }
 
-    let content = match fs::read_to_string(&file_path) {
+    let mut content = match fs::read_to_string(&file_path) {
         Ok(c) => c,
         Err(e) => return ApplyResult::IoError(file_path_str, e.to_string()),
     };
 
-    if content.contains(&block.search) {
+    // Strip BOM if present
+    if content.starts_with('\u{FEFF}') {
+        content = content[3..].to_string(); 
+    }
+
+    // Deeper check 1: Exact match
+    let match_count = content.matches(&block.search).count();
+    if match_count > 1 {
+        return ApplyResult::AmbiguousMatch(file_path_str);
+    }
+
+    if match_count == 1 {
         let updated = content.replacen(&block.search, &block.replace, 1);
         match fs::write(&file_path, updated) {
-            Ok(_) => ApplyResult::Updated(file_path_str),
-            Err(e) => ApplyResult::IoError(file_path_str, e.to_string()),
+            Ok(_) => return ApplyResult::Updated(file_path_str),
+            Err(e) => return ApplyResult::IoError(file_path_str, e.to_string()),
         }
-    } else {
-        // Try line-ending normalization
-        let norm_content = content.replace("\r\n", "\n");
-        let norm_search = block.search.replace("\r\n", "\n");
-        if norm_content.contains(&norm_search) {
-            let norm_replace = block.replace.replace("\r\n", "\n");
-            let updated = norm_content.replacen(&norm_search, &norm_replace, 1);
-            
-            // Re-apply original line endings if needed
-            let final_content = if content.contains("\r\n") {
-                updated.replace("\n", "\r\n")
-            } else {
-                updated
-            };
-            
-            match fs::write(&file_path, final_content) {
-                Ok(_) => ApplyResult::Updated(file_path_str),
-                Err(e) => ApplyResult::IoError(file_path_str, e.to_string()),
-            }
+    }
+
+    // Deeper check 2: Line-ending normalization match
+    let norm_content = content.replace("\r\n", "\n");
+    let norm_search = block.search.replace("\r\n", "\n");
+    
+    let norm_match_count = norm_content.matches(&norm_search).count();
+    if norm_match_count > 1 {
+        return ApplyResult::AmbiguousMatch(file_path_str);
+    }
+    
+    if norm_match_count == 1 {
+        let norm_replace = block.replace.replace("\r\n", "\n");
+        let updated = norm_content.replacen(&norm_search, &norm_replace, 1);
+        
+        let final_content = if content.contains("\r\n") {
+            updated.replace("\n", "\r\n")
         } else {
-            // Try whitespace agnostic matching
-            if let Some(updated) = apply_fuzzy_match(&content, &block.search, &block.replace) {
+            updated
+        };
+        
+        match fs::write(&file_path, final_content) {
+            Ok(_) => return ApplyResult::Updated(file_path_str),
+            Err(e) => return ApplyResult::IoError(file_path_str, e.to_string()),
+        }
+    }
+
+    // Deeper check 3: Whitespace-agnostic fuzzy matching
+    if let Some(fuzzy_result) = apply_fuzzy_match(&content, &block.search, &block.replace) {
+        match fuzzy_result {
+            Ok(updated) => {
                 match fs::write(&file_path, updated) {
-                    Ok(_) => ApplyResult::Updated(file_path_str),
-                    Err(e) => ApplyResult::IoError(file_path_str, e.to_string()),
+                    Ok(_) => return ApplyResult::Updated(file_path_str),
+                    Err(e) => return ApplyResult::IoError(file_path_str, e.to_string()),
                 }
-            } else {
-                ApplyResult::MatchNotFound(file_path_str)
+            },
+            Err(is_ambiguous) => {
+                if is_ambiguous {
+                    return ApplyResult::AmbiguousMatch(file_path_str);
+                }
             }
         }
     }
+
+    ApplyResult::MatchNotFound(file_path_str)
 }
 
 // Very basic fuzzy match: ignore leading/trailing whitespace on lines
-fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<String> {
+// Returns Ok(String) if exactly one match found, Err(true) if ambiguous, Err(false) if no match.
+fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<Result<String, bool>> {
     let content_lines: Vec<&str> = content.lines().collect();
     let search_lines: Vec<&str> = search.lines().map(|l| l.trim()).collect();
     
     if search_lines.is_empty() { return None; }
     
-    let mut match_idx = None;
+    let mut matches_found = vec![];
     for i in 0..=content_lines.len().saturating_sub(search_lines.len()) {
         let mut matches = true;
         for j in 0..search_lines.len() {
@@ -204,24 +226,27 @@ fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<Strin
             }
         }
         if matches {
-            match_idx = Some(i);
-            break;
+            matches_found.push(i);
         }
     }
     
-    if let Some(idx) = match_idx {
+    if matches_found.len() > 1 {
+        return Some(Err(true));
+    }
+    
+    if let Some(&idx) = matches_found.first() {
         let mut new_lines = Vec::new();
         new_lines.extend_from_slice(&content_lines[..idx]);
         new_lines.push(replace);
         new_lines.extend_from_slice(&content_lines[idx + search_lines.len()..]);
-        // Use standard newline, could be improved to detect CRLF vs LF
+        
         let mut result = new_lines.join("\n");
         if content.ends_with("\r\n") || content.ends_with('\n') {
             result.push('\n');
         }
-        Some(result)
+        Some(Ok(result))
     } else {
-        None
+        Some(Err(false))
     }
 }
 
@@ -246,46 +271,22 @@ mod tests {
         let blocks = parse_blocks(text);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].file_path, "src/main.rs");
-        // Windows line endings in the search block are retained (or at least consistently parsed)
         assert_eq!(blocks[0].search, "fn main() {\r\n}");
         assert_eq!(blocks[0].replace, "fn main() {\r\n    println!();\r\n}");
     }
 
     #[test]
     fn test_parse_multiple_blocks() {
-        let text = "
-File: one.txt
-<<<<<<< SEARCH
-1
-=======
-2
->>>>>>> REPLACE
-
-Some chatgpt text here.
-
-file: two.txt
-<<<<<<< SEARCH
-3
-=======
-4
->>>>>>> REPLACE
-";
+        let text = "\nFile: one.txt\n<<<<<<< SEARCH\n1\n=======\n2\n>>>>>>> REPLACE\n\nSome text\n\nfile: two.txt\n<<<<<<< SEARCH\n3\n=======\n4\n>>>>>>> REPLACE\n";
         let blocks = parse_blocks(text);
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].file_path, "one.txt");
         assert_eq!(blocks[1].file_path, "two.txt");
     }
-    
+
     #[test]
     fn test_parse_indented_markers() {
-        let text = "
-  File: a.txt
-  <<<<<<< SEARCH
-  a
-  =======
-  b
-  >>>>>>> REPLACE
-";
+        let text = "\n  File: a.txt\n  <<<<<<< SEARCH\n  a\n  =======\n  b\n  >>>>>>> REPLACE\n";
         let blocks = parse_blocks(text);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].file_path, "a.txt");
@@ -366,12 +367,10 @@ file: two.txt
     fn test_apply_fuzzy_match() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.txt");
-        // File has different indentation
         fs::write(&file_path, "fn main() {\n    println!();\n}").unwrap();
         
         let block = PatchBlock {
             file_path: "test.txt".to_string(),
-            // Search block missing some spaces
             search: "fn main() {\n println!();\n}".to_string(),
             replace: "fn main() {\n    println!(\"fixed\");\n}".to_string(),
         };
@@ -395,5 +394,97 @@ file: two.txt
         };
         let res = apply_block(dir.path(), &block);
         assert_eq!(res, ApplyResult::MatchNotFound("test.txt".to_string()));
+    }
+
+    // === NEW DEEPER TESTS ===
+
+    #[test]
+    fn test_ambiguous_match() {
+        // If the SEARCH block is found multiple times, we should refuse to apply it to prevent corrupting the file
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("ambiguous.txt");
+        fs::write(&file_path, "duplicate\nduplicate\n").unwrap();
+        
+        let block = PatchBlock {
+            file_path: "ambiguous.txt".to_string(),
+            search: "duplicate".to_string(),
+            replace: "replaced".to_string(),
+        };
+        let res = apply_block(dir.path(), &block);
+        assert_eq!(res, ApplyResult::AmbiguousMatch("ambiguous.txt".to_string()));
+    }
+
+    #[test]
+    fn test_ambiguous_fuzzy_match() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("fuzzy_ambig.txt");
+        // Spaced differently but semantically identical lines
+        fs::write(&file_path, "  line  \n\tline\t\n").unwrap();
+        
+        let block = PatchBlock {
+            file_path: "fuzzy_ambig.txt".to_string(),
+            search: "line".to_string(), // will fuzzily match both
+            replace: "replaced".to_string(),
+        };
+        let res = apply_block(dir.path(), &block);
+        assert_eq!(res, ApplyResult::AmbiguousMatch("fuzzy_ambig.txt".to_string()));
+    }
+
+    #[test]
+    fn test_unicode_support() {
+        // Ensuring it handles emojis, cyrillic, or whatever gracefully
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("unicode.txt");
+        fs::write(&file_path, "Hello 🌍!\nПривет мир!\n").unwrap();
+        
+        let block = PatchBlock {
+            file_path: "unicode.txt".to_string(),
+            search: "Привет мир!".to_string(),
+            replace: "Goodbye 🚀".to_string(),
+        };
+        let res = apply_block(dir.path(), &block);
+        assert_eq!(res, ApplyResult::Updated("unicode.txt".to_string()));
+        
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("Goodbye 🚀"));
+    }
+
+    #[test]
+    fn test_bom_handling() {
+        // If a file has a UTF-8 BOM, we should still match correctly
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("bom.txt");
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice(b"content\n");
+        fs::write(&file_path, &with_bom).unwrap();
+        
+        let block = PatchBlock {
+            file_path: "bom.txt".to_string(),
+            search: "content".to_string(),
+            replace: "new_content".to_string(),
+        };
+        let res = apply_block(dir.path(), &block);
+        assert_eq!(res, ApplyResult::Updated("bom.txt".to_string()));
+    }
+
+    #[test]
+    fn test_empty_search_but_file_exists() {
+        // If search is empty but file exists, it should probably be treated carefully.
+        // Aider sometimes uses empty search block to mean append to file, 
+        // but here it will just match the start of the file or nothing.
+        // Our fuzzy matcher will reject empty search lines entirely.
+        // And exact match of "" matches everywhere, so it's ambiguous.
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("empty.txt");
+        fs::write(&file_path, "existing\n").unwrap();
+        
+        let block = PatchBlock {
+            file_path: "empty.txt".to_string(),
+            search: "".to_string(),
+            replace: "appended\n".to_string(),
+        };
+        let res = apply_block(dir.path(), &block);
+        // Since "" matches everywhere in the string, matches() returns > 1, so it's ambiguous.
+        assert_eq!(res, ApplyResult::AmbiguousMatch("empty.txt".to_string()));
     }
 }

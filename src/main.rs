@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, Read};
-use chimera::{parse_blocks, apply_block, ApplyResult};
+use the_clipboard_centaur::{parse_blocks, apply_block, ApplyResult};
 
 fn main() {
     println!("Paste the output from ChatGPT below, then press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) to execute:\n");
@@ -23,6 +23,7 @@ fn main() {
         match apply_block(&current_dir, &block) {
             ApplyResult::Created(path) => println!("Created new file: {}", path),
             ApplyResult::Updated(path) => println!("Successfully updated: {}", path),
+            ApplyResult::AmbiguousMatch(path) => println!("ERROR: Search block matches multiple locations in {}. Please be more specific.", path),
             ApplyResult::MatchNotFound(path) => println!("ERROR: Could not find exact match for SEARCH block in {}", path),
             ApplyResult::IoError(path, err) => println!("ERROR: IO Error for file {}: {}", path, err),
             ApplyResult::SecurityError(err) => println!("ERROR: Security violation: {}", err),
