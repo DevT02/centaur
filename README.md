@@ -1,30 +1,40 @@
-# the-clipboard-centaur
+# The Clipboard Centaur
 
-A stupid simple, deterministic file patcher for AI coding workflows. 
+A dead-simple, deterministic file patcher for AI coding workflows. 
 
-You use ChatGPT Web. You paste your code. ChatGPT spits out diffs. You copy the diffs. You run `centaur -c`. It parses the diffs and patches your local files instantly. No API keys, no monthly subscriptions, no convoluted IDE plugins. 
+It connects ChatGPT Web directly to your local file system using your clipboard. You send your codebase to ChatGPT, it spits out code diffs, and Centaur applies those diffs to your local files instantly. 
 
-If ChatGPT hallucinates the diff context and the patch fails, Centaur uses your available RAM to spin up a local Ollama model in the background, feeds it the broken patch, and fixes the file locally.
+If a patch fails due to ChatGPT hallucinating the context, Centaur automatically spins up a local, offline LLM via Ollama to intelligently resolve the merge conflict for free.
 
-## Build
+## Installation
 
-You need Rust. 
+You need [Rust](https://rustup.rs/) installed.
 
 ```sh
 git clone https://github.com/DevT02/The-Clipboard-Centaur.git
 cd The-Clipboard-Centaur
-cargo build --release
+cargo install --path .
 ```
-Throw `target/release/centaur` into your PATH. 
+This globally installs the `centaur` binary to your PATH.
 
-*(Optional: Install Ollama if you want the local LLM fallback feature).*
+*(Optional: Install [Ollama](https://ollama.com/) if you want the local LLM fallback).*
 
-## Usage
+## The Workflow
 
-Start your ChatGPT session with this system prompt to force it into outputting clean blocks:
+### 1. Feed your codebase to ChatGPT
+Use the `--pack` command to bundle your project into a format ChatGPT easily understands. It strictly respects your `.gitignore`.
+
+```sh
+centaur --pack src/ Cargo.toml
+```
+- If your project is small, it instantly copies the bundle to your clipboard.
+- If your project is massive, it automatically chunks it into files (e.g. `centaur_context_part1.txt`) so you can seamlessly drag-and-drop them into the ChatGPT UI.
+
+### 2. The System Prompt
+Paste your codebase into ChatGPT along with your feature request, and **include this strict prompt**:
 
 ```text
-Output modifications using this exact Search/Replace block format. Do not output full files.
+Output modifications ONLY using this exact Search/Replace block format. Do not output full files.
 
 File: <path>
 <<<<<<< SEARCH
@@ -34,19 +44,11 @@ File: <path>
 >>>>>>> REPLACE
 ```
 
-When it replies, copy the text and run:
+### 3. Apply the AI's Code
+When ChatGPT responds with the diffs, simply highlight them and press `Ctrl+C` (Copy). Then, in your terminal, run:
 
 ```sh
 centaur -c --llm auto
 ```
-It reads your clipboard, patches the files, and exits. If it fails, `--llm auto` triggers a local Ollama model (sized dynamically to your available RAM) to resolve the merge conflict.
-
-### Packing Context
-
-If you need to feed your project to ChatGPT, use the pack command. It respects `.gitignore`. You can pass multiple folders or files.
-
-```sh
-centaur --pack src/ utils/ config.toml
-```
-
-If the output is massive, it will copy to your clipboard, but be aware of ChatGPT's context limits.
+- `-c`: Reads the diffs directly from your clipboard and patches the files.
+- `--llm auto`: If the deterministic patcher fails (e.g., ChatGPT messed up the indentation in the `SEARCH` block), Centaur will scan your system's available RAM and automatically trigger an intelligent, offline model (like DeepSeek or Qwen) to fix the file locally.
