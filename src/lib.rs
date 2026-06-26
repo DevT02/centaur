@@ -521,8 +521,6 @@ pub fn pack_files(files: Vec<std::path::PathBuf>, chunk_limit: usize) -> Vec<Str
 
         if part_num == total_chunks {
             final_chunk.push_str("\n\n(All parts provided. Please suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format. Do not output the entire file.)");
-        } else {
-            final_chunk.push_str("\n\n(End of Part {}. Do not analyze yet. Reply ONLY with 'Awaiting next part' until I send the final part.)");
         }
 
         *chunk = final_chunk;
@@ -563,7 +561,7 @@ mod pack_tests {
         assert_eq!(chunks.len(), 2);
         
         assert!(chunks[0].contains("(Part 1 of 2)"));
-        assert!(chunks[0].contains("Awaiting next part"));
+        assert!(!chunks[0].contains("Awaiting next part"));
         assert!(chunks[0].contains("A".repeat(60).as_str()));
         
         assert!(chunks[1].contains("(Part 2 of 2)"));

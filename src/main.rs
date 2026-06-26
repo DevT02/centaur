@@ -171,23 +171,18 @@ fn main() {
             }
         } else {
             println!("\n📦 PACKING COMPLETE - LARGE PROJECT DETECTED");
-            println!("Project split into {} chunks for ChatGPT Web limits.", total_chunks);
+            println!("Project split into {} files for easy uploading.", total_chunks);
             println!("--------------------------------------------------");
             for (i, chunk) in chunks.iter().enumerate() {
-                let file_name = format!("centaur_packed_part{}.txt", i + 1);
+                let file_name = format!("centaur_context_part{}.txt", i + 1);
                 if let Err(e) = fs::write(&file_name, chunk) {
                     eprintln!("❌ Failed to write {}: {}", file_name, e);
                 }
             }
-            // Auto-copy part 1
-            if let Ok(mut cb) = Clipboard::new() {
-                let _ = cb.set_text(chunks[0].clone());
-            }
-            println!("📋 Part 1 has been automatically copied to your clipboard!");
-            println!("1. Paste Part 1 into ChatGPT.");
-            println!("2. Wait for ChatGPT to reply with 'Awaiting next part'.");
-            for i in 2..=total_chunks {
-                println!("3. Open centaur_packed_part{}.txt, copy all text, and paste it.", i);
+            println!("✅ Saved {} context files to disk.", total_chunks);
+            println!("Instead of pasting, simply drag and drop these files simultaneously into your ChatGPT/Claude chat window:");
+            for i in 1..=total_chunks {
+                println!("  - centaur_context_part{}.txt", i);
             }
             println!("--------------------------------------------------");
         }
