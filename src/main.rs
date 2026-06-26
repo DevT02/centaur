@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::process::{Command, Stdio};
+use sysinfo::System;
 use the_clipboard_centaur::{apply_block, parse_blocks, ApplyResult};
 
 #[derive(Parser, Debug)]
@@ -22,10 +23,31 @@ struct Args {
     #[arg(short, long)]
     file: Option<String>,
 
-    /// Fallback to a local LLM via Ollama if the deterministic patch fails (e.g. 'llama3' or 'deepseek-coder')
+    /// Fallback to a local LLM via Ollama if the deterministic patch fails. Use 'auto' to automatically select the best model based on your system RAM.
     #[arg(short, long)]
     llm: Option<String>,
 }
+
+fn resolve_auto_llm() -> String {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    // total_memory is in bytes
+    let total_ram_gb = sys.total_memory() as f64 / 1_073_741_824.0;
+    
+    println!("🔍 Analyzing system specs: {:.1} GB Total RAM detected.", total_ram_gb);
+    
+    let (model, size, reason) = if total_ram_gb >= 31.0 {
+        ("deepseek-coder:33b", "~19GB", "Massive RAM available. This model has near GPT-4 level coding capabilities.")
+    } else if total_ram_gb >= 15.0 {
+        ("qwen2.5-coder:7b", "~4.5GB", "Great balance of coding intelligence and lightweight performance for 16GB systems.")
+    } else {
+        ("qwen2.5-coder:1.5b", "~1GB", "Low RAM detected. Ultra-lightweight model chosen for extreme speed without swapping.")
+    };
+    
+    println!("💡 Auto-Recommendation: Using '{}' (Download: {}) - {}", model, size, reason);
+    model.to_string()
+}
+
 
 fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str) -> bool {
     let file_path = std::path::Path::new(file_path_str);
@@ -138,6 +160,14 @@ fn main() {
         return;
     }
 
+    let resolved_llm = args.llm.map(|model| {
+        if model.eq_ignore_ascii_case("auto") {
+            resolve_auto_llm()
+        } else {
+            model
+        }
+    });
+
     let current_dir = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     for block in blocks {
@@ -146,13 +176,13 @@ fn main() {
             ApplyResult::Updated(path) => println!("✅ Successfully updated: {}", path),
             ApplyResult::AmbiguousMatch(path) => {
                 println!("❌ ERROR: Search block matches multiple locations in {}. Please be more specific.", path);
-                if let Some(ref model) = args.llm {
+                if let Some(ref model) = resolved_llm {
                     apply_with_llm(model, &path, &block.search, &block.replace);
                 }
             }
             ApplyResult::MatchNotFound(path) => {
                 println!("❌ ERROR: Could not find exact match for SEARCH block in {}", path);
-                if let Some(ref model) = args.llm {
+                if let Some(ref model) = resolved_llm {
                     apply_with_llm(model, &path, &block.search, &block.replace);
                 }
             }
