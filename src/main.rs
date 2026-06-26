@@ -43,11 +43,11 @@ fn resolve_auto_llm() -> String {
     println!("🔍 Analyzing system specs: {:.1} GB Total RAM ({:.1} GB Available right now)", total_ram_gb, available_ram_gb);
     
     let (model, size, reason) = if available_ram_gb >= 20.0 {
-        ("deepseek-coder:33b", "~19GB", "Massive available RAM. This model has near GPT-4 level coding capabilities.")
+        ("llama3:70b", "~40GB", "Massive available RAM. Meta's Llama 3 70B (USA) provides top-tier reasoning capabilities.")
     } else if available_ram_gb >= 6.0 {
-        ("qwen2.5-coder:7b", "~4.5GB", "Great balance of intelligence and performance for your current available memory.")
+        ("llama3:8b", "~4.7GB", "Great balance. Meta's Llama 3 8B (USA) is extremely capable and fits comfortably in your RAM.")
     } else {
-        ("qwen2.5-coder:1.5b", "~1GB", "Low available memory detected (e.g. from browser/IDE overhead). Ultra-lightweight model chosen to avoid crashing or swapping.")
+        ("phi3:mini", "~2.3GB", "Low available memory. Microsoft's Phi-3 (USA) is chosen to avoid crashing or swapping.")
     };
     
     println!("💡 Auto-Recommendation: Using '{}' (Download: {}) - {}", model, size, reason);
