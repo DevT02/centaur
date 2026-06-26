@@ -1,86 +1,52 @@
-# 🐴 The Clipboard Centaur
+# the-clipboard-centaur
 
-**A fast, deterministic, and zero-compute local file patcher for AI coding workflows.**
+A stupid simple, deterministic file patcher for AI coding workflows. 
 
-The Clipboard Centaur bridges the gap between Cloud LLMs (like ChatGPT or Claude Web) and your local codebase. Instead of manually copying and pasting code back into your IDE, you simply copy the AI's output, and the Centaur instantly patches your local files with mathematical precision. 
+You use ChatGPT Web. You paste your code. ChatGPT spits out diffs. You copy the diffs. You run `centaur -c`. It parses the diffs and patches your local files instantly. No API keys, no monthly subscriptions, no convoluted IDE plugins. 
 
-Best of all? It costs **$0**, uses **zero local GPU**, and features an intelligent local LLM fallback if the patch gets messy.
+If ChatGPT hallucinates the diff context and the patch fails, Centaur uses your available RAM to spin up a local Ollama model in the background, feeds it the broken patch, and fixes the file locally.
 
----
+## Build
 
-## ⚡ Features
+You need Rust. 
 
-- **Blazing Fast (Zero-Compute):** Written in Rust, the tool parses `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks and applies them instantaneously using exact and fuzzy-string matching.
-- **Direct Clipboard Integration:** Parses AI output directly from your OS clipboard (`--clipboard`). No terminal pasting required.
-- **Smart Local LLM Fallback (`--llm auto`):** If a patch fails (e.g., ambiguous matches), the Centaur will dynamically assess your system's available RAM and securely boot up a local Ollama model (like `deepseek-coder` or `qwen2.5-coder`) to surgically fix the file in the background.
-- **Deep Safety Nets:** Built-in protection against directory traversal attacks, ambiguous match failures, and OS file locks.
-
----
-
-## 🚀 Installation
-
-Ensure you have [Rust installed](https://rustup.rs/), then clone and build the optimized binary:
-
-```bash
+```sh
 git clone https://github.com/DevT02/The-Clipboard-Centaur.git
 cd The-Clipboard-Centaur
 cargo build --release
 ```
+Throw `target/release/centaur` into your PATH. 
 
-**Pro-Tip:** Add the `target\release\` directory to your Windows/Linux `PATH` so you can just type `centaur` from anywhere!
+*(Optional: Install Ollama if you want the local LLM fallback feature).*
 
-*(Optional) If you want the `--llm auto` fallback feature to work, ensure you have [Ollama installed](https://ollama.com/) on your machine.*
+## Usage
 
----
-
-## 📖 The Daily Workflow
-
-### Step 1: The Robust AI Prompt
-Start your conversation with ChatGPT (or put this in your Custom Instructions / System Prompt). This guarantees the AI outputs the correct, parsable format.
+Start your ChatGPT session with this system prompt to force it into outputting clean blocks:
 
 ```text
-You are an expert developer assisting with a local codebase. 
+Output modifications using this exact Search/Replace block format. Do not output full files.
 
-When you suggest modifications, refactors, or fixes, you must ONLY output the changes using specific Search/Replace blocks. Do not output the entire file.
-
-FORMAT:
-For each change, you must provide a block like this:
-
-File: <relative file path>
+File: <path>
 <<<<<<< SEARCH
-<exact lines to replace, including surrounding context>
+<exact lines to replace, with context>
 =======
-<the new lines to insert>
+<new lines>
 >>>>>>> REPLACE
-
-RULES:
-1. The SEARCH block MUST perfectly match the existing code in the file, character for character, including whitespace and indentation.
-2. Include a few lines of context before and after the change in the SEARCH block to ensure it is uniquely matched.
-3. You can output multiple blocks for multiple changes.
 ```
 
-### Step 2: Ask the AI
-Paste your code into the chat and ask it to make a change (e.g., *"Add a login button"*). 
+When it replies, copy the text and run:
 
-### Step 3: Run the Centaur
-When the AI generates the blocks, simply copy its output. Open your terminal inside your project directory and run:
-
-```bash
+```sh
 centaur -c --llm auto
 ```
-The Centaur will instantly read your clipboard, locate the files, and apply the exact diffs. 
+It reads your clipboard, patches the files, and exits. If it fails, `--llm auto` triggers a local Ollama model (sized dynamically to your available RAM) to resolve the merge conflict.
 
----
+### Packing Context
 
-## ⚙️ CLI Usage
+If you need to feed your project to ChatGPT, use the pack command. It respects `.gitignore`. You can pass multiple folders or files.
 
-```text
-Usage: centaur [OPTIONS]
-
-Options:
-  -c, --clipboard      Read the patch text directly from the OS clipboard.
-  -f, --file <FILE>    Read the patch text from a specific text file.
-  -l, --llm <LLM>      Fallback to a local LLM via Ollama if the patch fails. Use 'auto' to automatically select the best model based on available RAM.
-  -h, --help           Print help menu.
-  -V, --version        Print version.
+```sh
+centaur --pack src/ utils/ config.toml
 ```
+
+If the output is massive, it will copy to your clipboard, but be aware of ChatGPT's context limits.

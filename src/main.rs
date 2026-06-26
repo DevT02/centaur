@@ -150,50 +150,12 @@ fn main() {
         }
 
         const CHUNK_LIMIT: usize = 100_000; // ~25k tokens per chunk to safely fit ChatGPT web limits
-        let mut chunks: Vec<String> = Vec::new();
-        let mut current_chunk = String::new();
-        let mut total_files = 0;
-
-        for path in files_to_pack {
-            if let Ok(content) = fs::read_to_string(&path) {
-                // Ensure paths use forward slashes for AI consistency
-                let normalized_path = path.display().to_string().replace("\\", "/");
-                
-                // AI-optimized markdown structure
-                let file_str = format!("File: `{}`\n```\n{}\n```\n\n", normalized_path, content);
-                
-                if current_chunk.len() + file_str.len() > CHUNK_LIMIT && !current_chunk.is_empty() {
-                    chunks.push(current_chunk);
-                    current_chunk = String::new();
-                }
-                current_chunk.push_str(&file_str);
-                total_files += 1;
-            }
-        }
-        if !current_chunk.is_empty() {
-            chunks.push(current_chunk);
-        }
-
+        let chunks = the_clipboard_centaur::pack_files(files_to_pack, CHUNK_LIMIT);
         let total_chunks = chunks.len();
+
         if total_chunks == 0 {
             println!("No readable text files found to pack.");
             return;
-        }
-
-        // Write chunks and apply system prompts
-        for (i, chunk) in chunks.iter_mut().enumerate() {
-            let part_num = i + 1;
-            let mut final_chunk = format!("(Part {} of {})\n\n", part_num, total_chunks);
-            final_chunk.push_str("Here is my codebase context:\n\n");
-            final_chunk.push_str(chunk);
-
-            if part_num == total_chunks {
-                final_chunk.push_str("\n\n(All parts provided. Please suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format. Do not output the entire file.)");
-            } else {
-                final_chunk.push_str("\n\n(End of Part {}. Do not analyze yet. Reply ONLY with 'Awaiting next part' until I send the final part.)");
-            }
-
-            *chunk = final_chunk;
         }
 
         if total_chunks == 1 {
@@ -202,13 +164,15 @@ fn main() {
                     if let Err(e) = cb.set_text(chunks[0].clone()) {
                         eprintln!("❌ Failed to write to clipboard: {}", e);
                     } else {
-                        println!("✅ Successfully packed {} files into your clipboard! Ready to paste into ChatGPT.", total_files);
+                        println!("✅ Successfully packed all files into your clipboard! Ready to paste into ChatGPT.");
                     }
                 },
                 Err(e) => eprintln!("❌ Failed to initialize clipboard: {}", e),
             }
         } else {
-            println!("⚠️ Project is large. Split into {} chunks for ChatGPT Web.", total_chunks);
+            println!("\n📦 PACKING COMPLETE - LARGE PROJECT DETECTED");
+            println!("Project split into {} chunks for ChatGPT Web limits.", total_chunks);
+            println!("--------------------------------------------------");
             for (i, chunk) in chunks.iter().enumerate() {
                 let file_name = format!("centaur_packed_part{}.txt", i + 1);
                 if let Err(e) = fs::write(&file_name, chunk) {
@@ -219,9 +183,13 @@ fn main() {
             if let Ok(mut cb) = Clipboard::new() {
                 let _ = cb.set_text(chunks[0].clone());
             }
-            println!("✅ Saved {} parts to disk (e.g. centaur_packed_part1.txt).", total_chunks);
             println!("📋 Part 1 has been automatically copied to your clipboard!");
-            println!("Paste Part 1 into ChatGPT, let it reply, then manually open and copy the remaining parts.");
+            println!("1. Paste Part 1 into ChatGPT.");
+            println!("2. Wait for ChatGPT to reply with 'Awaiting next part'.");
+            for i in 2..=total_chunks {
+                println!("3. Open centaur_packed_part{}.txt, copy all text, and paste it.", i);
+            }
+            println!("--------------------------------------------------");
         }
         return;
     }

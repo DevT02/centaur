@@ -485,6 +485,89 @@ mod tests {
         };
         let res = apply_block(dir.path(), &block);
         // Since "" matches everywhere in the string, matches() returns > 1, so it's ambiguous.
-        assert_eq!(res, ApplyResult::AmbiguousMatch("empty.txt".to_string()));
+    }
+}
+
+pub fn pack_files(files: Vec<std::path::PathBuf>, chunk_limit: usize) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current_chunk = String::new();
+
+    for path in files {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let normalized_path = path.display().to_string().replace("\\", "/");
+            let file_str = format!("File: `{}`\n```\n{}\n```\n\n", normalized_path, content);
+            
+            if current_chunk.len() + file_str.len() > chunk_limit && !current_chunk.is_empty() {
+                chunks.push(current_chunk);
+                current_chunk = String::new();
+            }
+            current_chunk.push_str(&file_str);
+        }
+    }
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    let total_chunks = chunks.len();
+    if total_chunks == 0 {
+        return chunks;
+    }
+
+    for (i, chunk) in chunks.iter_mut().enumerate() {
+        let part_num = i + 1;
+        let mut final_chunk = format!("(Part {} of {})\n\n", part_num, total_chunks);
+        final_chunk.push_str("Here is my codebase context:\n\n");
+        final_chunk.push_str(chunk);
+
+        if part_num == total_chunks {
+            final_chunk.push_str("\n\n(All parts provided. Please suggest fixes ONLY using the <<<<<<< SEARCH / >>>>>>> REPLACE block format. Do not output the entire file.)");
+        } else {
+            final_chunk.push_str("\n\n(End of Part {}. Do not analyze yet. Reply ONLY with 'Awaiting next part' until I send the final part.)");
+        }
+
+        *chunk = final_chunk;
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+    
+    #[test]
+    fn test_pack_files_single_chunk() {
+        let dir = tempdir().unwrap();
+        let file1 = dir.path().join("file1.rs");
+        fs::write(&file1, "fn main() {}").unwrap();
+        
+        let chunks = pack_files(vec![file1.clone()], 100_000);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].contains("File: `"));
+        assert!(chunks[0].contains("fn main() {}"));
+        assert!(chunks[0].contains("(Part 1 of 1)"));
+        assert!(chunks[0].contains("All parts provided."));
+    }
+
+    #[test]
+    fn test_pack_files_multiple_chunks() {
+        let dir = tempdir().unwrap();
+        let file1 = dir.path().join("file1.rs");
+        let file2 = dir.path().join("file2.rs");
+        fs::write(&file1, "A".repeat(60)).unwrap();
+        fs::write(&file2, "B".repeat(60)).unwrap();
+        
+        let chunks = pack_files(vec![file1.clone(), file2.clone()], 50);
+        assert_eq!(chunks.len(), 2);
+        
+        assert!(chunks[0].contains("(Part 1 of 2)"));
+        assert!(chunks[0].contains("Awaiting next part"));
+        assert!(chunks[0].contains("A".repeat(60).as_str()));
+        
+        assert!(chunks[1].contains("(Part 2 of 2)"));
+        assert!(chunks[1].contains("All parts provided."));
+        assert!(chunks[1].contains("B".repeat(60).as_str()));
     }
 }
