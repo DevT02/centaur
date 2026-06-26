@@ -31,17 +31,18 @@ struct Args {
 fn resolve_auto_llm() -> String {
     let mut sys = System::new_all();
     sys.refresh_all();
-    // total_memory is in bytes
+    // memory is in bytes
     let total_ram_gb = sys.total_memory() as f64 / 1_073_741_824.0;
+    let available_ram_gb = sys.available_memory() as f64 / 1_073_741_824.0;
     
-    println!("🔍 Analyzing system specs: {:.1} GB Total RAM detected.", total_ram_gb);
+    println!("🔍 Analyzing system specs: {:.1} GB Total RAM ({:.1} GB Available right now)", total_ram_gb, available_ram_gb);
     
-    let (model, size, reason) = if total_ram_gb >= 31.0 {
-        ("deepseek-coder:33b", "~19GB", "Massive RAM available. This model has near GPT-4 level coding capabilities.")
-    } else if total_ram_gb >= 15.0 {
-        ("qwen2.5-coder:7b", "~4.5GB", "Great balance of coding intelligence and lightweight performance for 16GB systems.")
+    let (model, size, reason) = if available_ram_gb >= 20.0 {
+        ("deepseek-coder:33b", "~19GB", "Massive available RAM. This model has near GPT-4 level coding capabilities.")
+    } else if available_ram_gb >= 6.0 {
+        ("qwen2.5-coder:7b", "~4.5GB", "Great balance of intelligence and performance for your current available memory.")
     } else {
-        ("qwen2.5-coder:1.5b", "~1GB", "Low RAM detected. Ultra-lightweight model chosen for extreme speed without swapping.")
+        ("qwen2.5-coder:1.5b", "~1GB", "Low available memory detected (e.g. from browser/IDE overhead). Ultra-lightweight model chosen to avoid crashing or swapping.")
     };
     
     println!("💡 Auto-Recommendation: Using '{}' (Download: {}) - {}", model, size, reason);
