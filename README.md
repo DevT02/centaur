@@ -17,7 +17,7 @@ cargo install --path .
 ```
 This globally installs the `centaur` binary to your PATH.
 
-*(Optional: Install [Ollama](https://ollama.com/) if you want the local LLM fallback).*
+*(Optional: Run `centaur --setup` to verify your Ollama installation, analyze your system RAM, and pre-download the optimal fallback LLM so it's instantly ready when you need it).*
 
 ## The Workflow
 

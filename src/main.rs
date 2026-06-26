@@ -30,6 +30,10 @@ struct Args {
     /// Pack files/directories into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
     #[arg(short, long, num_args = 1..)]
     pack: Option<Vec<String>>,
+
+    /// Run initial setup: verifies your environment, analyzes your RAM, and pre-downloads the optimal AI model.
+    #[arg(long)]
+    setup: bool,
 }
 
 fn resolve_auto_llm() -> String {
@@ -125,6 +129,41 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
 
 fn main() {
     let args = Args::parse();
+
+    if args.setup {
+        println!("\n🔧 Running The Clipboard Centaur Setup...\n");
+        println!("Checking for Ollama installation...");
+        let ollama_check = Command::new("ollama").arg("--version").output();
+        match ollama_check {
+            Ok(out) if out.status.success() => println!("✅ Ollama is installed: {}", String::from_utf8_lossy(&out.stdout).trim()),
+            _ => {
+                println!("❌ Ollama is NOT installed or not found in PATH.");
+                println!("Please download and install it from https://ollama.com, then run this setup again.");
+                return;
+            }
+        }
+        
+        println!("\nAnalyzing system hardware to determine the best local AI model for diff resolution...");
+        let model = resolve_auto_llm();
+        
+        println!("\n📥 Pre-downloading model '{}' so it's ready instantly when a diff fails...", model);
+        println!("(This may take a few minutes depending on your internet connection)");
+        
+        let mut child = Command::new("ollama")
+            .arg("pull")
+            .arg(&model)
+            .spawn()
+            .expect("Failed to start ollama pull");
+            
+        let status = child.wait().expect("Failed to wait on ollama pull");
+        if status.success() {
+            println!("\n✅ Setup complete! The AI model is cached locally.");
+            println!("You are now ready to seamlessly use: centaur -c --llm auto");
+        } else {
+            println!("\n❌ Failed to pull the model. Please check your internet connection and try again.");
+        }
+        return;
+    }
 
     if let Some(paths) = args.pack {
         println!("📦 Packing {} targets...", paths.len());
