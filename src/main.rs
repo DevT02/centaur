@@ -196,6 +196,15 @@ fn main() {
                             if path_str.contains(".centaur_export") || file_name.starts_with("centaur_context_part") {
                                 continue; // Never pack our own generated context chunks
                             }
+                            
+                            // Automatically skip massive files (like CSVs, DuckDB, SQLite) that user forgot to gitignore
+                            if let Ok(metadata) = p.metadata() {
+                                if metadata.len() > 1_000_000 {
+                                    eprintln!("⚠️ Skipping massive file (>1MB): {}", file_name);
+                                    continue;
+                                }
+                            }
+                            
                             files_to_pack.push(p.to_path_buf());
                         }
                     }
