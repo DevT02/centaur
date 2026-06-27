@@ -22,10 +22,10 @@ This globally installs the `centaur` binary to your PATH.
 ## The Workflow
 
 ### 1. Feed your codebase to ChatGPT
-Use the `--pack` command to bundle your project into a format ChatGPT easily understands. It strictly respects your `.gitignore`.
+Use the `--export` command to bundle your project into a format ChatGPT easily understands. It strictly respects your `.gitignore`.
 
 ```sh
-centaur --pack src/ Cargo.toml
+centaur --export src/ Cargo.toml
 ```
 - If your project is small, it instantly copies the bundle to your clipboard.
 - If your project is massive, it automatically chunks it into files (e.g. `centaur_context_part1.txt`) so you can seamlessly drag-and-drop them into the ChatGPT UI.

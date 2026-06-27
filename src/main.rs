@@ -27,9 +27,9 @@ struct Args {
     #[arg(short, long)]
     llm: Option<String>,
 
-    /// Pack files/directories into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
+    /// Export files/directories into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
     #[arg(short, long, num_args = 0..)]
-    pack: Option<Vec<String>>,
+    export: Option<Vec<String>>,
 
     /// Run initial setup: verifies your environment, analyzes your RAM, and pre-downloads the optimal AI model.
     #[arg(long)]
@@ -177,11 +177,11 @@ fn main() {
         return;
     }
 
-    if let Some(mut paths) = args.pack {
+    if let Some(mut paths) = args.export {
         if paths.is_empty() {
             paths.push(".".to_string());
         }
-        println!("📦 Packing {} targets...", paths.len());
+        println!("📦 Exporting {} targets...", paths.len());
         
         // Collect all files first
         let mut files_to_pack = Vec::new();
@@ -224,7 +224,7 @@ fn main() {
                 Err(e) => eprintln!("❌ Failed to initialize clipboard: {}", e),
             }
         } else {
-            println!("\n📦 PACKING COMPLETE - LARGE PROJECT DETECTED");
+            println!("\n📦 EXPORT COMPLETE - LARGE PROJECT DETECTED");
             println!("Project split into {} files for easy uploading.", total_chunks);
             println!("--------------------------------------------------");
             for (i, chunk) in chunks.iter().enumerate() {
