@@ -254,9 +254,12 @@ fn main() {
             println!("Project split into {} files for easy uploading.", total_chunks);
             println!("--------------------------------------------------");
             
-            let export_dir = std::path::Path::new(".centaur_export");
-            if let Err(e) = fs::create_dir_all(export_dir) {
-                eprintln!("❌ Failed to create .centaur_export directory: {}", e);
+            let export_dir = std::env::temp_dir().join("centaur_export");
+            if export_dir.exists() {
+                let _ = fs::remove_dir_all(&export_dir); // Clear old exports
+            }
+            if let Err(e) = fs::create_dir_all(&export_dir) {
+                eprintln!("❌ Failed to create temporary export directory: {}", e);
                 return;
             }
 
@@ -267,20 +270,20 @@ fn main() {
                 }
             }
             
-            println!("✅ Saved {} context files into the `.centaur_export/` directory.", total_chunks);
+            println!("✅ Saved {} context files into your system's temporary directory.", total_chunks);
             println!("Instead of pasting, simply drag and drop these files simultaneously into your ChatGPT/Claude chat window:");
             for i in 1..=total_chunks {
-                println!("  - .centaur_export/centaur_context_part{}.txt", i);
+                println!("  - centaur_context_part{}.txt", i);
             }
             println!("--------------------------------------------------");
             
-            // Auto-open file explorer
+            // Auto-open file explorer to the temp directory
             #[cfg(target_os = "windows")]
-            let _ = Command::new("explorer").arg(".centaur_export").spawn();
+            let _ = Command::new("explorer").arg(&export_dir).spawn();
             #[cfg(target_os = "macos")]
-            let _ = Command::new("open").arg(".centaur_export").spawn();
+            let _ = Command::new("open").arg(&export_dir).spawn();
             #[cfg(target_os = "linux")]
-            let _ = Command::new("xdg-open").arg(".centaur_export").spawn();
+            let _ = Command::new("xdg-open").arg(&export_dir).spawn();
         }
         return;
     }
