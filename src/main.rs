@@ -34,6 +34,10 @@ struct Args {
     /// Run initial setup: verifies your environment, analyzes your RAM, and pre-downloads the optimal AI model.
     #[arg(long)]
     setup: bool,
+
+    /// Bypass the safety size and chunk limits for massive exports
+    #[arg(long)]
+    force: bool,
 }
 
 fn resolve_auto_llm() -> String {
@@ -198,10 +202,12 @@ fn main() {
                             }
                             
                             // Automatically skip massive files (like CSVs, DuckDB, SQLite) that user forgot to gitignore
-                            if let Ok(metadata) = p.metadata() {
-                                if metadata.len() > 1_000_000 {
-                                    eprintln!("⚠️ Skipping massive file (>1MB): {}", file_name);
-                                    continue;
+                            if !args.force {
+                                if let Ok(metadata) = p.metadata() {
+                                    if metadata.len() > 1_000_000 {
+                                        eprintln!("⚠️ Skipping massive file (>1MB): {}", file_name);
+                                        continue;
+                                    }
                                 }
                             }
                             
@@ -224,7 +230,7 @@ fn main() {
 
         // Safety Guard 1: Absolute payload size (prevents single massive files like 2MB CSVs from bypassing chunk limits)
         let total_chars: usize = chunks.iter().map(|c| c.len()).sum();
-        if total_chars > 3_000_000 {
+        if !args.force && total_chars > 3_000_000 {
             println!("\n❌ ERROR: Project is too massive! Total payload is {} characters.", total_chars);
             println!("ChatGPT and Claude have hard context limits and cannot process a codebase this large.");
             println!("You are likely including massive datasets, compiled binaries, or dependencies.");
@@ -232,11 +238,12 @@ fn main() {
             println!("1. Ensure you have a .gitignore file (ignoring things like node_modules, target, venv).");
             println!("2. Explicitly target specific folders instead of the whole project:");
             println!("   Example: centaur --export src/ config.toml");
+            println!("3. Bypass this safety limit with --force (e.g., centaur -e --force)");
             return;
         }
 
         // Safety Guard 2: Chunk count (prevents generating too many files for the UI drag-and-drop)
-        if total_chunks > 15 {
+        if !args.force && total_chunks > 15 {
             println!("\n❌ ERROR: Project is too massive! Generated {} context files.", total_chunks);
             println!("ChatGPT and Claude have hard context limits and cannot process a codebase this large.");
             println!("You are likely including build directories, datasets, or dependencies.");
@@ -244,6 +251,7 @@ fn main() {
             println!("1. Ensure you have a .gitignore file (ignoring things like node_modules, target, venv).");
             println!("2. Explicitly target specific folders instead of the whole project:");
             println!("   Example: centaur --export src/ config.toml");
+            println!("3. Bypass this safety limit with --force (e.g., centaur -e --force)");
             return;
         }
 
