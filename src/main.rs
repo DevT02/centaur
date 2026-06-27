@@ -183,23 +183,23 @@ fn main() {
         }
         println!("📦 Exporting {} targets...", paths.len());
         
-        // Collect all files first
         let mut files_to_pack = Vec::new();
-        for path_str in &paths {
-            let path = std::path::Path::new(path_str);
-            if path.is_file() {
-                files_to_pack.push(path.to_path_buf());
-            } else if path.is_dir() {
-                let walker = ignore::WalkBuilder::new(path).build();
-                for result in walker {
-                    if let Ok(entry) = result {
-                        if entry.file_type().map_or(false, |ft| ft.is_file()) {
-                            files_to_pack.push(entry.path().to_path_buf());
+        for path_str in paths {
+            let walker = ignore::WalkBuilder::new(&path_str).build();
+            for result in walker {
+                match result {
+                    Ok(entry) => {
+                        let p = entry.path();
+                        if p.is_file() {
+                            let file_name = p.file_name().unwrap_or_default().to_string_lossy();
+                            if file_name.starts_with("centaur_context_part") {
+                                continue; // Never pack our own generated context chunks
+                            }
+                            files_to_pack.push(p.to_path_buf());
                         }
                     }
+                    Err(err) => eprintln!("⚠️ Warning: Error walking directory: {}", err),
                 }
-            } else {
-                eprintln!("Warning: Path does not exist or is inaccessible: {}", path_str);
             }
         }
 
