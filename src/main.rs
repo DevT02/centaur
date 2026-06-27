@@ -234,7 +234,7 @@ fn main() {
         // Safety Guard 1: Absolute payload size (prevents single massive files like 2MB CSVs from bypassing chunk limits)
         let total_chars: usize = chunks.iter().map(|c| c.len()).sum();
         if !args.force && total_chars > 3_000_000 {
-            println!("\n❌ ERROR: Project is too massive! Total payload is {} characters.", total_chars);
+            println!("\n❌ ERROR: Project is too massive! Total payload is {} characters (Max: 3,000,000).", total_chars);
             println!("ChatGPT and Claude have hard context limits and cannot process a codebase this large.");
             println!("You are likely including massive datasets, compiled binaries, or dependencies.");
             println!("\nHow to fix:");
