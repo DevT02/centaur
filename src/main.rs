@@ -132,6 +132,18 @@ fn main() {
 
     if args.setup {
         println!("\n🔧 Running The Clipboard Centaur Setup...\n");
+        
+        println!("==================================================");
+        println!("🧠 HOW CENTAUR WORKS");
+        println!("==================================================");
+        println!("1. FAST PATH: You copy ChatGPT's code diffs to your clipboard.");
+        println!("   Centaur runs a lightning-fast, deterministic regex patch to update your local files instantly.");
+        println!("2. FALLBACK PATH: If ChatGPT hallucinates context and the patch fails, Centaur automatically");
+        println!("   spins up an offline, local LLM to intelligently resolve the merge conflict.");
+        println!("3. PERFORMANCE: Ollama automatically utilizes KV Caching, keeping the fallback model hot in ");
+        println!("   your VRAM for 5 minutes so consecutive edits happen instantly without reload penalties.");
+        println!("==================================================\n");
+
         println!("Checking for Ollama installation...");
         let ollama_check = Command::new("ollama").arg("--version").output();
         match ollama_check {
