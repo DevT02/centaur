@@ -38,6 +38,10 @@ struct Args {
     /// Bypass the safety size and chunk limits for massive exports
     #[arg(long)]
     force: bool,
+
+    /// Specify a custom chunk size in characters for the exports (default: 100000)
+    #[arg(long, default_value_t = 100_000)]
+    chunk_size: usize,
 }
 
 fn resolve_auto_llm() -> String {
@@ -219,8 +223,7 @@ fn main() {
             }
         }
 
-        const CHUNK_LIMIT: usize = 100_000; // ~25k tokens per chunk to safely fit ChatGPT web limits
-        let chunks = the_clipboard_centaur::pack_files(files_to_pack, CHUNK_LIMIT);
+        let chunks = the_clipboard_centaur::pack_files(files_to_pack, args.chunk_size);
         let total_chunks = chunks.len();
 
         if total_chunks == 0 {
