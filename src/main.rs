@@ -208,7 +208,18 @@ fn main() {
         let total_chunks = chunks.len();
 
         if total_chunks == 0 {
-            println!("No readable text files found to pack.");
+            println!("No readable text files found to export.");
+            return;
+        }
+
+        if total_chunks > 10 {
+            println!("\n❌ ERROR: Project is too massive! Generated {} context files.", total_chunks);
+            println!("ChatGPT and Claude have hard context limits and cannot process a codebase this large.");
+            println!("You are likely including build directories, datasets, or dependencies.");
+            println!("\nHow to fix:");
+            println!("1. Ensure you have a .gitignore file (ignoring things like node_modules, target, venv).");
+            println!("2. Explicitly target specific folders instead of the whole project:");
+            println!("   Example: centaur --export src/ config.toml");
             return;
         }
 
@@ -239,6 +250,14 @@ fn main() {
                 println!("  - centaur_context_part{}.txt", i);
             }
             println!("--------------------------------------------------");
+            
+            // Auto-open file explorer
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(".").spawn();
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(".").spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(".").spawn();
         }
         return;
     }
