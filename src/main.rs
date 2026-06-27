@@ -39,8 +39,8 @@ struct Args {
     #[arg(long)]
     force: bool,
 
-    /// Specify a custom chunk size in characters for the exports (default: 100000)
-    #[arg(long, default_value_t = 100_000)]
+    /// Specify a custom chunk size in characters for the exports (default: 300000)
+    #[arg(long, default_value_t = 300_000)]
     chunk_size: usize,
 }
 
