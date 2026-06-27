@@ -28,7 +28,7 @@ struct Args {
     llm: Option<String>,
 
     /// Pack files/directories into a single string (respecting .gitignore) and copy it to your clipboard for ChatGPT.
-    #[arg(short, long, num_args = 1..)]
+    #[arg(short, long, num_args = 0..)]
     pack: Option<Vec<String>>,
 
     /// Run initial setup: verifies your environment, analyzes your RAM, and pre-downloads the optimal AI model.
@@ -177,7 +177,10 @@ fn main() {
         return;
     }
 
-    if let Some(paths) = args.pack {
+    if let Some(mut paths) = args.pack {
+        if paths.is_empty() {
+            paths.push(".".to_string());
+        }
         println!("📦 Packing {} targets...", paths.len());
         
         // Collect all files first
