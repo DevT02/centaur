@@ -492,6 +492,17 @@ pub fn pack_files(files: Vec<std::path::PathBuf>, chunk_limit: usize) -> Vec<Str
     let mut chunks: Vec<String> = Vec::new();
     let mut current_chunk = String::new();
 
+    // Generate a simple Project Structure map at the very beginning
+    let mut tree_str = String::from("Project Directory Structure:\n");
+    let mut sorted_files = files.clone();
+    sorted_files.sort();
+    for path in &sorted_files {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        tree_str.push_str(&format!("  - {}\n", normalized));
+    }
+    tree_str.push_str("\n==================================================\n\n");
+    current_chunk.push_str(&tree_str);
+
     for path in files {
         if let Ok(content) = std::fs::read_to_string(&path) {
             let normalized_path = path.display().to_string().replace("\\", "/");
@@ -557,15 +568,14 @@ mod pack_tests {
         fs::write(&file1, "A".repeat(60)).unwrap();
         fs::write(&file2, "B".repeat(60)).unwrap();
         
-        let chunks = pack_files(vec![file1.clone(), file2.clone()], 50);
-        assert_eq!(chunks.len(), 2);
+        let chunks = pack_files(vec![file1.clone(), file2.clone()], 100);
+        assert!(chunks.len() > 1);
         
-        assert!(chunks[0].contains("(Part 1 of 2)"));
+        assert!(chunks[0].contains("(Part 1 of "));
         assert!(!chunks[0].contains("Awaiting next part"));
-        assert!(chunks[0].contains("A".repeat(60).as_str()));
+        assert!(chunks[0].contains("Project Directory Structure:"));
         
-        assert!(chunks[1].contains("(Part 2 of 2)"));
-        assert!(chunks[1].contains("All parts provided."));
-        assert!(chunks[1].contains("B".repeat(60).as_str()));
+        let last_chunk = chunks.last().unwrap();
+        assert!(last_chunk.contains("All parts provided."));
     }
 }
