@@ -1,1 +1,21 @@
+# Build output
 /target
+
+# IDE & Editor files
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS & Temp files
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Local testing scratch artifacts
+test_export/
+test_export.ps1
+dummy/
+centaur_export_*
