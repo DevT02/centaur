@@ -21,6 +21,7 @@ Use the web AI access you already have instead of paying for an API-driven agent
 - **Mistakes are reversible.** Each applied patch creates a local history entry that `centaur undo` can restore.
 - **Exports are safer.** Centaur warns about likely credentials and can redact them from the temporary upload copy.
 - **Large repositories fit.** Context is split into attachment-sized batches with a manifest and token estimate.
+- **Save tokens for architecture.** Get past context limits when system planning. The model can spend its tokens making the best design decisions instead of wasting them on terminal output and tool overhead.
 
 ## Install
 
@@ -102,10 +103,10 @@ Run `centaur --help` for every option and default.
 
 ## Documentation
 
-- [Usage guide](docs/USAGE.md): recipes, configuration, prompt customization, and troubleshooting
-- [Architecture](docs/ARCHITECTURE.md): data flow, module map, and safety invariants
-- [Contributing](CONTRIBUTING.md): setup, checks, and pull request expectations
-- [Productivity roadmap](docs/ROADMAP.md): prioritized improvements for releases, automation, and AI-assisted development
+- [Usage guide](https://github.com/DevT02/centaur/blob/master/docs/USAGE.md): recipes, configuration, prompt customization, and troubleshooting
+- [Architecture](https://github.com/DevT02/centaur/blob/master/docs/ARCHITECTURE.md): data flow, module map, and safety invariants
+- [Contributing](https://github.com/DevT02/centaur/blob/master/CONTRIBUTING.md): setup, checks, and pull request expectations
+- [Productivity roadmap](https://github.com/DevT02/centaur/blob/master/docs/ROADMAP.md): prioritized improvements for releases, automation, and AI-assisted development
 
 ## Development
 
