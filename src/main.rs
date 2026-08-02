@@ -110,8 +110,32 @@ enum Commands {
     Audit,
     /// Auto-update Centaur binary to the latest version on PATH
     Update,
-    /// Serve apply/undo tools to an MCP client over stdio
+    /// Connect Centaur to a GUI client that speaks MCP
     Mcp {
+        #[command(subcommand)]
+        action: McpAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpAction {
+    /// Add Centaur to a client's MCP configuration. Omit --client to list clients.
+    Install {
+        /// Client id, for example claude-desktop, antigravity, cursor
+        #[arg(long)]
+        client: Option<String>,
+        /// Configuration file to edit instead, for any client not listed
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Project the client may patch (default: current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Name for the entry in the client's configuration
+        #[arg(long, default_value = "centaur")]
+        name: String,
+    },
+    /// Run the stdio server. Clients launch this themselves; you rarely run it by hand.
+    Serve {
         /// Workspace the client may patch. Fixed here so the model cannot choose it.
         #[arg(long)]
         workspace: PathBuf,
@@ -354,13 +378,30 @@ fn main() -> ExitCode {
                 }
             }
             Commands::Update => handle_auto_update(),
-            Commands::Mcp { workspace } => match the_clipboard_centaur::mcp::serve(&workspace) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("❌ MCP server failed: {}", e);
-                    ExitCode::FAILURE
+            Commands::Mcp { action } => {
+                let outcome = match action {
+                    McpAction::Install { client, config, workspace, name } => {
+                        let workspace = workspace.unwrap_or_else(|| current_dir.clone());
+                        the_clipboard_centaur::mcp::install(
+                            client.as_deref(),
+                            config.as_deref(),
+                            &workspace,
+                            &name,
+                        )
+                        .map(|report| println!("{}", report))
+                    }
+                    McpAction::Serve { workspace } => {
+                        the_clipboard_centaur::mcp::serve(&workspace)
+                    }
+                };
+                match outcome {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("❌ {}", e);
+                        ExitCode::FAILURE
+                    }
                 }
-            },
+            }
         };
     }
 
