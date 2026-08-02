@@ -49,6 +49,7 @@ flowchart LR
 | `prompt.rs` | Default/custom prompt templates and placeholder rendering |
 | `config.rs` | Persistent export settings and `CENTAUR_HOME` |
 | `review.rs` | Per-file patch summaries |
+| `mcp.rs` | MCP stdio server exposing apply and undo to shell-less GUI clients |
 
 ## Safety invariants
 
@@ -59,6 +60,7 @@ flowchart LR
 - Dry runs must not write files or history.
 - Redaction must never mutate the source workspace.
 - Undo sessions must be visible only from the workspace that created them.
+- The MCP workspace root comes from the launching client's configuration, never from a tool argument.
 - Existing CRLF line endings and UTF-8 BOM behavior must remain stable.
 
 Tests for these boundaries belong in `tests/regressions.rs` or `tests/intricate_edge_cases.rs`. CLI exit behavior belongs in `tests/exit_codes.rs`; Git status parsing belongs in `tests/git_changed.rs`.

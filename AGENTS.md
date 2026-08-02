@@ -25,6 +25,7 @@ The test command is the required gate. Do not introduce a repository-wide format
 - `src/history.rs`: workspace-scoped undo history
 - `src/secrets.rs`: export scanning and redaction
 - `src/ui.rs`: interactive terminal workflows
+- `src/mcp.rs`: MCP stdio server for GUI chat clients
 - `src/config.rs` and `src/prompt.rs`: persistent settings and prompt templates
 
 ## Invariants

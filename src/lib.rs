@@ -2,6 +2,7 @@ pub mod config;
 pub mod export;
 pub mod git;
 pub mod history;
+pub mod mcp;
 pub mod pack;
 pub mod patch;
 pub mod prompt;

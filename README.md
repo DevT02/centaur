@@ -98,8 +98,52 @@ centaur --export --mode changed --redact
 | `centaur prompt show\|copy\|edit\|reset` | Manage the workflow prompt templates |
 | `centaur config init\|path` | Create the default config or print its location |
 | `centaur --llm auto --clipboard` | Let a local Ollama model repair malformed patch blocks as a fallback |
+| `centaur mcp --workspace <path>` | Serve the apply and undo tools to an MCP client over stdio |
 
 Run `centaur --help` for every option and default.
+
+## GUI clients
+
+Chat applications that have no shell of their own, such as Claude Desktop, can apply Centaur patches through the Model Context Protocol.
+
+### 1. Install the binary and find its full path
+
+```sh
+cargo install --git https://github.com/DevT02/centaur.git --force
+```
+
+Print the installed location with `where centaur` on Windows or `which centaur` on macOS and Linux. It is normally `C:\Users\<you>\.cargo\bin\centaur.exe` or `~/.cargo/bin/centaur`.
+
+Use that full path in the next step. Desktop applications are not launched from a terminal and do not inherit your shell's `PATH`, so a bare `"centaur"` usually fails to start.
+
+### 2. Register the server with your client
+
+Claude Desktop reads `%APPDATA%\Claude\claude_desktop_config.json` on Windows and `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS. Create the file if it does not exist, or add the `centaur` entry to the `mcpServers` object already there.
+
+```json
+{
+  "mcpServers": {
+    "centaur": {
+      "command": "C:/Users/you/.cargo/bin/centaur.exe",
+      "args": ["mcp", "--workspace", "C:/path/to/your/project"]
+    }
+  }
+}
+```
+
+Write Windows paths with forward slashes or with doubled backslashes. JSON rejects a single backslash.
+
+Each entry serves exactly one project. To work across several repositories, add one entry per repository under a distinct name such as `centaur-api` and `centaur-web`.
+
+### 3. Restart the client
+
+MCP servers start when the application does, so a running client will not pick up the change. After the restart, `apply_patch` and `undo` appear in its tool list.
+
+### What the model can and cannot do
+
+It can apply Search/Replace blocks and revert them. It cannot choose the workspace: the directory in your configuration is the only one the server will write to, and paths that try to escape it are refused. Every apply validates all blocks before writing any of them, and records an undo snapshot first. `undo` restores the most recent session unless you name an older one.
+
+Editors that already run shell commands, such as Cursor or Antigravity, do not need any of this. They can call the CLI directly.
 
 ## Documentation
 
