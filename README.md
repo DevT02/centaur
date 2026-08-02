@@ -98,8 +98,30 @@ centaur --export --mode changed --redact
 | `centaur prompt show\|copy\|edit\|reset` | Manage the workflow prompt templates |
 | `centaur config init\|path` | Create the default config or print its location |
 | `centaur --llm auto --clipboard` | Let a local Ollama model repair malformed patch blocks as a fallback |
+| `centaur mcp --workspace <path>` | Serve the apply and undo tools to an MCP client over stdio |
 
 Run `centaur --help` for every option and default.
+
+## GUI clients
+
+Chat applications that have no shell of their own, such as Claude Desktop, can apply Centaur patches through the Model Context Protocol. Add the server to the client's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "centaur": {
+      "command": "centaur",
+      "args": ["mcp", "--workspace", "C:/path/to/your/project"]
+    }
+  }
+}
+```
+
+The model gets two tools, `apply_patch` and `undo`. It cannot choose the workspace: the directory in this configuration is the only one the server will write to. Every apply still validates all blocks before writing any of them and records an undo snapshot first.
+
+Desktop applications usually do not inherit your shell's `PATH`. If the client reports that the server failed to start, replace `"centaur"` with the absolute path printed by `where centaur` on Windows or `which centaur` elsewhere.
+
+Editors that already run shell commands, such as Cursor or Antigravity, do not need this. They can call the CLI directly.
 
 ## Documentation
 

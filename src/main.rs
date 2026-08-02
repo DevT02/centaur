@@ -110,6 +110,12 @@ enum Commands {
     Audit,
     /// Auto-update Centaur binary to the latest version on PATH
     Update,
+    /// Serve apply/undo tools to an MCP client over stdio
+    Mcp {
+        /// Workspace the client may patch. Fixed here so the model cannot choose it.
+        #[arg(long)]
+        workspace: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -348,6 +354,13 @@ fn main() -> ExitCode {
                 }
             }
             Commands::Update => handle_auto_update(),
+            Commands::Mcp { workspace } => match the_clipboard_centaur::mcp::serve(&workspace) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("❌ MCP server failed: {}", e);
+                    ExitCode::FAILURE
+                }
+            },
         };
     }
 
