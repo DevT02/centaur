@@ -98,52 +98,68 @@ centaur --export --mode changed --redact
 | `centaur prompt show\|copy\|edit\|reset` | Manage the workflow prompt templates |
 | `centaur config init\|path` | Create the default config or print its location |
 | `centaur --llm auto --clipboard` | Let a local Ollama model repair malformed patch blocks as a fallback |
-| `centaur mcp --workspace <path>` | Serve the apply and undo tools to an MCP client over stdio |
+| `centaur mcp install --client <id>` | Add Centaur to a GUI client's MCP configuration |
+| `centaur mcp serve --workspace <path>` | Serve the apply and undo tools over stdio; clients run this themselves |
 
 Run `centaur --help` for every option and default.
 
 ## GUI clients
 
-Chat applications that have no shell of their own, such as Claude Desktop, can apply Centaur patches through the Model Context Protocol.
+Desktop AI applications can apply Centaur patches through the Model Context Protocol. They all speak the same stdio protocol and differ only in where their configuration file lives, so one command covers all of them.
 
-### 1. Install the binary and find its full path
+### 1. Install the binary
 
 ```sh
 cargo install --git https://github.com/DevT02/centaur.git --force
 ```
 
-Print the installed location with `where centaur` on Windows or `which centaur` on macOS and Linux. It is normally `C:\Users\<you>\.cargo\bin\centaur.exe` or `~/.cargo/bin/centaur`.
+### 2. Register Centaur with your client
 
-Use that full path in the next step. Desktop applications are not launched from a terminal and do not inherit your shell's `PATH`, so a bare `"centaur"` usually fails to start.
+Run this from the project you want the client to edit:
 
-### 2. Register the server with your client
-
-Claude Desktop reads `%APPDATA%\Claude\claude_desktop_config.json` on Windows and `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS. Create the file if it does not exist, or add the `centaur` entry to the `mcpServers` object already there.
-
-```json
-{
-  "mcpServers": {
-    "centaur": {
-      "command": "C:/Users/you/.cargo/bin/centaur.exe",
-      "args": ["mcp", "--workspace", "C:/path/to/your/project"]
-    }
-  }
-}
+```sh
+centaur mcp install --client antigravity
 ```
 
-Write Windows paths with forward slashes or with doubled backslashes. JSON rejects a single backslash.
+Run `centaur mcp install` with no arguments to list every client, its configuration path, and whether that file already exists on this machine.
 
-Each entry serves exactly one project. To work across several repositories, add one entry per repository under a distinct name such as `centaur-api` and `centaur-web`.
+| Client id | Application |
+| --- | --- |
+| `claude-desktop` | Claude Desktop |
+| `antigravity`, `antigravity-ide` | Antigravity |
+| `cursor` | Cursor |
+| `windsurf` | Windsurf |
+| `gemini-cli` | Gemini CLI |
+| `vscode` | VS Code, written to this project's `.vscode/mcp.json` |
+| `codex` | ChatGPT desktop and Codex CLI; prints a snippet to paste |
+
+For a client that is not listed, name its configuration file directly:
+
+```sh
+centaur mcp install --config ~/.some-client/mcp.json
+```
+
+The command writes the absolute path of the installed binary, which matters because desktop applications are not launched from a terminal and do not inherit your shell's `PATH`. Existing entries in the file are preserved.
+
+The workspace defaults to the current directory. Pass `--workspace` to choose a different one, and `--name` to register several projects side by side:
+
+```sh
+centaur mcp install --client cursor --workspace ~/code/api --name centaur-api
+```
 
 ### 3. Restart the client
 
-MCP servers start when the application does, so a running client will not pick up the change. After the restart, `apply_patch` and `undo` appear in its tool list.
+MCP servers start when the application does, so a running client will not notice the change. After the restart, `apply_patch` and `undo` appear in its tool list.
 
 ### What the model can and cannot do
 
-It can apply Search/Replace blocks and revert them. It cannot choose the workspace: the directory in your configuration is the only one the server will write to, and paths that try to escape it are refused. Every apply validates all blocks before writing any of them, and records an undo snapshot first. `undo` restores the most recent session unless you name an older one.
+It can apply Search/Replace blocks and revert them. It cannot choose the workspace: the directory recorded at install time is the only one the server will write to, and paths that try to escape it are refused. Every apply validates all blocks before writing any of them, and records an undo snapshot first. `undo` restores the most recent session unless you name an older one.
 
-Editors that already run shell commands, such as Cursor or Antigravity, do not need any of this. They can call the CLI directly.
+### Clients this does not reach
+
+ChatGPT on the web accepts only remote HTTPS servers, so a local one cannot reach it. The consumer Gemini app is the same: its MCP support runs through Google's developer tooling rather than the chat app. Use the clipboard workflow for those.
+
+Editors that already run shell commands do not need any of this. They can call the CLI directly.
 
 ## Documentation
 

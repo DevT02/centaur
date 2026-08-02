@@ -13,8 +13,9 @@ use crate::history::PatchSessionRecord;
 use crate::patch::{apply_blocks_transactional, ApplyResult};
 use crate::{count_search_markers, parse_blocks};
 use serde_json::{json, Value};
+use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Used only when a client omits its own version during initialize.
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -231,6 +232,212 @@ fn describe(result: &ApplyResult) -> String {
     }
 }
 
+/// One MCP client's configuration file. Clients differ only in where the file
+/// lives and what the server map is called, so the same entry works everywhere.
+struct ClientTarget {
+    id: &'static str,
+    label: &'static str,
+    format: Format,
+    path: Option<PathBuf>,
+}
+
+enum Format {
+    /// Editable in place. The payload is the name of the server map.
+    Json(&'static str),
+    /// Codex-style TOML. These files carry comments and hand-tuned formatting that a
+    /// parse-and-rewrite would flatten, so print the snippet and let the user paste it.
+    TomlSnippet,
+}
+
+fn known_clients(workspace: &Path) -> Vec<ClientTarget> {
+    let home = dirs::home_dir();
+    let in_home = |parts: &[&str]| {
+        home.as_ref()
+            .map(|h| parts.iter().fold(h.clone(), |path, part| path.join(part)))
+    };
+    // config_dir is %APPDATA% on Windows, ~/Library/Application Support on macOS,
+    // and ~/.config on Linux, which is where Claude Desktop looks on each.
+    let config = dirs::config_dir();
+
+    vec![
+        ClientTarget {
+            id: "claude-desktop",
+            label: "Claude Desktop",
+            format: Format::Json("mcpServers"),
+            path: config.map(|c| c.join("Claude").join("claude_desktop_config.json")),
+        },
+        ClientTarget {
+            id: "antigravity",
+            label: "Antigravity",
+            format: Format::Json("mcpServers"),
+            path: in_home(&[".gemini", "antigravity", "mcp_config.json"]),
+        },
+        ClientTarget {
+            id: "antigravity-ide",
+            label: "Antigravity IDE",
+            format: Format::Json("mcpServers"),
+            path: in_home(&[".gemini", "antigravity-ide", "mcp_config.json"]),
+        },
+        ClientTarget {
+            id: "cursor",
+            label: "Cursor",
+            format: Format::Json("mcpServers"),
+            path: in_home(&[".cursor", "mcp.json"]),
+        },
+        ClientTarget {
+            id: "windsurf",
+            label: "Windsurf",
+            format: Format::Json("mcpServers"),
+            path: in_home(&[".codeium", "windsurf", "mcp_config.json"]),
+        },
+        ClientTarget {
+            id: "gemini-cli",
+            label: "Gemini CLI",
+            format: Format::Json("mcpServers"),
+            path: in_home(&[".gemini", "settings.json"]),
+        },
+        ClientTarget {
+            id: "vscode",
+            label: "VS Code (this project)",
+            format: Format::Json("servers"),
+            path: Some(workspace.join(".vscode").join("mcp.json")),
+        },
+        ClientTarget {
+            id: "codex",
+            label: "ChatGPT desktop and Codex CLI",
+            format: Format::TomlSnippet,
+            path: in_home(&[".codex", "config.toml"]),
+        },
+    ]
+}
+
+fn client_listing(workspace: &Path) -> String {
+    let mut out = String::from("Known MCP clients:\n\n");
+    for client in known_clients(workspace) {
+        let (state, location) = match &client.path {
+            Some(path) if path.exists() => ("found   ", path.display().to_string()),
+            Some(path) => ("new file", path.display().to_string()),
+            None => ("n/a     ", "could not resolve a home directory".to_string()),
+        };
+        let note = match client.format {
+            Format::Json(_) => "",
+            Format::TomlSnippet => "  (prints a snippet to paste)",
+        };
+        out.push_str(&format!("  {:<16} {}  {}{}\n", client.id, state, location, note));
+    }
+    out.push_str("\nInstall with:  centaur mcp install --client <id>\n");
+    out.push_str("Any other client:  centaur mcp install --config <path to its config file>\n");
+    out
+}
+
+/// Adds (or updates) the Centaur entry in a client's MCP configuration. Every other
+/// key in the file is preserved: these files hold the user's other servers.
+pub fn install(
+    client: Option<&str>,
+    config: Option<&Path>,
+    workspace: &Path,
+    name: &str,
+) -> Result<String, String> {
+    let workspace = std::path::absolute(workspace)
+        .map_err(|e| format!("Could not resolve workspace '{}': {}", workspace.display(), e))?;
+    if !workspace.is_dir() {
+        return Err(format!("Workspace is not a directory: {}", workspace.display()));
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|e| format!("Could not resolve the centaur executable: {}", e))?;
+
+    let (path, key) = match (client, config) {
+        (Some(id), _) => {
+            let target = known_clients(&workspace)
+                .into_iter()
+                .find(|c| c.id == id)
+                .ok_or_else(|| format!("Unknown client '{}'.\n\n{}", id, client_listing(&workspace)))?;
+            let path = target.path.ok_or_else(|| {
+                format!("Could not resolve the configuration path for {}.", target.label)
+            })?;
+            match target.format {
+                Format::Json(key) => (path, key),
+                Format::TomlSnippet => {
+                    return Ok(toml_snippet(&path, name, &executable, &workspace))
+                }
+            }
+        }
+        (None, Some(path)) => (path.to_path_buf(), "mcpServers"),
+        (None, None) => return Ok(client_listing(&workspace)),
+    };
+
+    let existing = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("Could not read {}: {}", path.display(), e)),
+    };
+
+    // Several clients ship this file empty rather than absent.
+    let mut root: Value = if existing.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str(&existing).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({}). Fix or move it, then run this again.",
+                path.display(),
+                e
+            )
+        })?
+    };
+
+    if !root.is_object() {
+        return Err(format!("{} does not contain a JSON object.", path.display()));
+    }
+
+    let replaced = root.get(key).and_then(|servers| servers.get(name)).is_some();
+
+    let servers = root
+        .get(key)
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    root[key] = servers;
+    root[key][name] = json!({
+        "command": executable.to_string_lossy(),
+        "args": ["mcp", "serve", "--workspace", workspace.to_string_lossy()]
+    });
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
+    }
+    let rendered = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    fs::write(&path, rendered).map_err(|e| format!("Could not write {}: {}", path.display(), e))?;
+
+    Ok(format!(
+        "{} entry '{}' in {}\n  command:   {}\n  workspace: {}\n\nRestart the client so it picks up the change.",
+        if replaced { "Updated" } else { "Added" },
+        name,
+        path.display(),
+        executable.display(),
+        workspace.display()
+    ))
+}
+
+fn toml_snippet(path: &Path, name: &str, executable: &Path, workspace: &Path) -> String {
+    // Backslashes are an escape in TOML basic strings, so emit forward slashes.
+    let quote = |p: &Path| p.display().to_string().replace('\\', "/");
+    format!(
+        "Add this to {}:\n\n\
+         [mcp_servers.{}]\n\
+         command = \"{}\"\n\
+         args = [\"mcp\", \"serve\", \"--workspace\", \"{}\"]\n\n\
+         Written by hand because that file keeps comments and formatting a rewrite would lose.\n\
+         ChatGPT desktop can also add this from its own MCP settings panel: choose STDIO, then\n\
+         give it the command and arguments above.",
+        path.display(),
+        name,
+        quote(executable),
+        quote(workspace)
+    )
+}
+
 fn result_response(id: &Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
@@ -266,5 +473,37 @@ mod tests {
         assert!(report.contains("traversal"), "report should name the cause: {}", report);
         // The transaction aborts as a whole, so the legal block must not land either.
         assert_eq!(std::fs::read_to_string(&inside).unwrap(), "original");
+    }
+
+    #[test]
+    fn install_keeps_the_rest_of_the_client_config() {
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("client.json");
+        fs::write(
+            &config,
+            r#"{"preferences":{"theme":"dark"},"mcpServers":{"playwright":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+
+        let report = install(None, Some(&config), dir.path(), "centaur").unwrap();
+        assert!(report.contains("Added"), "{}", report);
+
+        let written: Value = serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(written["preferences"]["theme"], "dark");
+        assert_eq!(written["mcpServers"]["playwright"]["command"], "npx");
+        assert_eq!(written["mcpServers"]["centaur"]["args"][1], "serve");
+    }
+
+    #[test]
+    fn install_handles_an_empty_config_file() {
+        // Antigravity ships mcp_config.json as a zero-byte file.
+        let dir = tempdir().unwrap();
+        let config = dir.path().join("mcp_config.json");
+        fs::write(&config, "").unwrap();
+
+        install(None, Some(&config), dir.path(), "centaur").unwrap();
+
+        let written: Value = serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        assert!(written["mcpServers"]["centaur"]["command"].is_string());
     }
 }
