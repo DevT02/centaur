@@ -8,13 +8,13 @@ use std::process::{Command, ExitCode, Stdio};
 use sysinfo::System;
 use the_clipboard_centaur::config::CentaurConfig;
 use the_clipboard_centaur::export;
-use the_clipboard_centaur::git::{is_git_repo, ExportMode};
+use the_clipboard_centaur::git::{ExportMode, is_git_repo};
 use the_clipboard_centaur::pack::PackOptions;
-use the_clipboard_centaur::patch::{apply_blocks_transactional, ApplyResult};
+use the_clipboard_centaur::parse_blocks;
+use the_clipboard_centaur::patch::{ApplyResult, apply_blocks_transactional};
 use the_clipboard_centaur::prompt::{
     handle_prompt_copy, handle_prompt_edit, handle_prompt_reset, handle_prompt_show,
 };
-use the_clipboard_centaur::parse_blocks;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -115,6 +115,44 @@ enum Commands {
         #[command(subcommand)]
         action: McpAction,
     },
+    /// Install the /centaur slash command in a GUI client
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+    /// Unified 1-step setup: Install MCP servers and slash commands across GUI clients
+    Install {
+        /// Client id (default: all). Pass 'all' or specific client like antigravity, claude, cursor
+        #[arg(long, default_value = "all")]
+        client: String,
+        /// Project workspace directory (default: current directory)
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Name for the entry and slash command (default: centaur)
+        #[arg(long, default_value = "centaur")]
+        name: String,
+    },
+    /// System diagnostics, environment health checks, and MCP client status
+    Doctor,
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillAction {
+    /// Write the command file for a client. Omit --client to list clients.
+    Install {
+        /// Client id, for example antigravity, claude-code, cursor
+        #[arg(long)]
+        client: Option<String>,
+        /// Markdown file to write instead, for any client not listed
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Project the command applies to, for clients that store it per project
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Name of the command, which is what you type after the slash
+        #[arg(long, default_value = "centaur")]
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -172,17 +210,35 @@ fn resolve_auto_llm() -> String {
     let total_ram_gb = sys.total_memory() as f64 / 1_073_741_824.0;
     let available_ram_gb = sys.available_memory() as f64 / 1_073_741_824.0;
 
-    println!("🔍 Analyzing system specs: {:.1} GB Total RAM ({:.1} GB Available right now)", total_ram_gb, available_ram_gb);
+    println!(
+        "🔍 Analyzing system specs: {:.1} GB Total RAM ({:.1} GB Available right now)",
+        total_ram_gb, available_ram_gb
+    );
 
     let (model, size, reason) = if available_ram_gb >= 20.0 {
-        ("deepseek-coder:33b", "~19GB", "Massive available RAM. DeepSeek provides near GPT-4 level coding capabilities.")
+        (
+            "deepseek-coder:33b",
+            "~19GB",
+            "Massive available RAM. DeepSeek provides near GPT-4 level coding capabilities.",
+        )
     } else if available_ram_gb >= 6.0 {
-        ("qwen2.5-coder:7b", "~4.5GB", "Great balance of intelligence and performance for your current available memory.")
+        (
+            "qwen2.5-coder:7b",
+            "~4.5GB",
+            "Great balance of intelligence and performance for your current available memory.",
+        )
     } else {
-        ("qwen2.5-coder:1.5b", "~1GB", "Low available memory detected. Ultra-lightweight model chosen to avoid swapping.")
+        (
+            "qwen2.5-coder:1.5b",
+            "~1GB",
+            "Low available memory detected. Ultra-lightweight model chosen to avoid swapping.",
+        )
     };
 
-    println!("💡 Auto-Recommendation: Using '{}' (Download: {}) - {}", model, size, reason);
+    println!(
+        "💡 Auto-Recommendation: Using '{}' (Download: {}) - {}",
+        model, size, reason
+    );
     model.to_string()
 }
 
@@ -195,7 +251,10 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
         search, replace, content
     );
 
-    println!("🤖 Asking Ollama ({}) to resolve patch for {}...", model, file_path_str);
+    println!(
+        "🤖 Asking Ollama ({}) to resolve patch for {}...",
+        model, file_path_str
+    );
 
     let mut child = match Command::new("ollama")
         .arg("run")
@@ -227,7 +286,9 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
                     if !lines.is_empty() && lines[0].starts_with("```") {
                         lines.remove(0);
                     }
-                    if !lines.is_empty() && lines.last().map(|l| l.starts_with("```")).unwrap_or(false) {
+                    if !lines.is_empty()
+                        && lines.last().map(|l| l.starts_with("```")).unwrap_or(false)
+                    {
                         lines.pop();
                     }
                     result_text = lines.join("\n");
@@ -240,7 +301,10 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
                     true
                 }
             } else {
-                println!("❌ ERROR: Ollama failed: {}", String::from_utf8_lossy(&out.stderr));
+                println!(
+                    "❌ ERROR: Ollama failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
                 false
             }
         }
@@ -281,7 +345,9 @@ fn handle_auto_update() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("❌ Auto-update failed during binary installation. Try running 'cargo install --path . --force' manually.");
+            eprintln!(
+                "❌ Auto-update failed during binary installation. Try running 'cargo install --path . --force' manually."
+            );
             ExitCode::FAILURE
         }
     }
@@ -346,7 +412,10 @@ fn main() -> ExitCode {
                 }
             },
             Commands::Undo { session_id } => {
-                match the_clipboard_centaur::history::PatchSessionRecord::revert_session(&current_dir, &session_id) {
+                match the_clipboard_centaur::history::PatchSessionRecord::revert_session(
+                    &current_dir,
+                    &session_id,
+                ) {
                     Ok(restored) => {
                         println!("✅ Successfully reverted patch session:");
                         for r in restored {
@@ -380,7 +449,12 @@ fn main() -> ExitCode {
             Commands::Update => handle_auto_update(),
             Commands::Mcp { action } => {
                 let outcome = match action {
-                    McpAction::Install { client, config, workspace, name } => {
+                    McpAction::Install {
+                        client,
+                        config,
+                        workspace,
+                        name,
+                    } => {
                         let workspace = workspace.unwrap_or_else(|| current_dir.clone());
                         the_clipboard_centaur::mcp::install(
                             client.as_deref(),
@@ -390,9 +464,7 @@ fn main() -> ExitCode {
                         )
                         .map(|report| println!("{}", report))
                     }
-                    McpAction::Serve { workspace } => {
-                        the_clipboard_centaur::mcp::serve(&workspace)
-                    }
+                    McpAction::Serve { workspace } => the_clipboard_centaur::mcp::serve(&workspace),
                 };
                 match outcome {
                     Ok(()) => ExitCode::SUCCESS,
@@ -402,10 +474,77 @@ fn main() -> ExitCode {
                     }
                 }
             }
+            Commands::Skill { action } => {
+                let SkillAction::Install {
+                    client,
+                    output,
+                    workspace,
+                    name,
+                } = action;
+                let workspace = workspace.unwrap_or_else(|| current_dir.clone());
+                match the_clipboard_centaur::skill::install(
+                    client.as_deref(),
+                    output.as_deref(),
+                    &workspace,
+                    &name,
+                ) {
+                    Ok(report) => {
+                        println!("{}", report);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("❌ {}", e);
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            Commands::Install {
+                client,
+                workspace,
+                name,
+            } => {
+                let workspace = workspace.unwrap_or_else(|| current_dir.clone());
+                println!(
+                    "Setting up Centaur for workspace {}...\n",
+                    workspace.display()
+                );
+
+                let mcp_res =
+                    the_clipboard_centaur::mcp::install(Some(&client), None, &workspace, &name);
+                let skill_res =
+                    the_clipboard_centaur::skill::install(Some(&client), None, &workspace, &name);
+
+                match (mcp_res, skill_res) {
+                    (Ok(mcp_rep), Ok(skill_rep)) => {
+                        println!("--- MCP Configurations ---\n{}\n", mcp_rep);
+                        println!("--- Slash Commands & Skills ---\n{}\n", skill_rep);
+                        println!("Centaur setup complete. Restart your AI client(s) to activate.");
+                        ExitCode::SUCCESS
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        eprintln!("❌ Setup failed: {}", e);
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+            Commands::Doctor => {
+                let report = the_clipboard_centaur::doctor::diagnose(&current_dir);
+                print!("{}", report.render_human());
+                if report.summary_ok {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
         };
     }
 
-    if args.export.is_none() && !args.clipboard && args.file.is_none() && !args.setup && !args.dry_run {
+    if args.export.is_none()
+        && !args.clipboard
+        && args.file.is_none()
+        && !args.setup
+        && !args.dry_run
+    {
         // Zero-flag CLI invocation launch Interactive TUI Workspace Hub
         the_clipboard_centaur::ui::run_interactive_hub();
         return ExitCode::SUCCESS;
@@ -416,7 +555,10 @@ fn main() -> ExitCode {
         println!("Checking for Ollama installation...");
         let ollama_check = Command::new("ollama").arg("--version").output();
         match ollama_check {
-            Ok(out) if out.status.success() => println!("✅ Ollama is installed: {}", String::from_utf8_lossy(&out.stdout).trim()),
+            Ok(out) if out.status.success() => println!(
+                "✅ Ollama is installed: {}",
+                String::from_utf8_lossy(&out.stdout).trim()
+            ),
             _ => {
                 eprintln!("❌ Ollama is NOT installed or not found in PATH.");
                 return ExitCode::FAILURE;
@@ -445,7 +587,11 @@ fn main() -> ExitCode {
 
         let mode = args.mode;
         let root_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let root_name = root_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let root_name = root_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
         let files_to_pack = export::collect_files(&root_dir, mode, &paths);
         let secret_warnings = export::scan_files(&files_to_pack);
@@ -462,13 +608,17 @@ fn main() -> ExitCode {
             }
         }
 
-        let max_parts = args.max_parts.unwrap_or(config.export.max_attachments_per_message);
+        let max_parts = args
+            .max_parts
+            .unwrap_or(config.export.max_attachments_per_message);
         // The current flag wins; --chunk-size is only a fallback for old scripts.
         let max_part_chars = args
             .max_part_chars
             .or(args.chunk_size)
             .unwrap_or(config.export.max_attachment_chars);
-        let context_tokens = args.context_tokens.unwrap_or(config.export.context_token_budget);
+        let context_tokens = args
+            .context_tokens
+            .unwrap_or(config.export.context_token_budget);
         let session_id = generate_session_id();
 
         let request = export::ExportRequest {
@@ -476,7 +626,8 @@ fn main() -> ExitCode {
             task: args.task.unwrap_or_default(),
             redact: args.redact,
             copy_prompt: config.export.copy_prompt
-                && (config.export.prompt_mode == "first" || config.export.prompt_mode == "every-batch"),
+                && (config.export.prompt_mode == "first"
+                    || config.export.prompt_mode == "every-batch"),
             pack: PackOptions {
                 max_attachment_chars: max_part_chars,
                 max_attachments_per_message: max_parts,
@@ -501,7 +652,10 @@ fn main() -> ExitCode {
         println!("✅ Export prepared\n");
         println!("Files:                {:>8}", result.summary.total_files);
         println!("Characters:           {:>8}", result.summary.total_chars);
-        println!("Estimated tokens:     {:>8}", format!("~{}", result.summary.estimated_tokens));
+        println!(
+            "Estimated tokens:     {:>8}",
+            format!("~{}", result.summary.estimated_tokens)
+        );
         println!("Attachments:          {:>8}", result.summary.total_parts);
         println!("Upload messages:      {:>8}", result.summary.total_batches);
 
@@ -531,23 +685,41 @@ fn main() -> ExitCode {
         if result.summary.total_batches == 1 {
             println!("\n--- HOW TO USE ---");
             println!("1. Open the export folder: {}", export_dir.display());
-            println!("2. Copy the text in COPY_THIS_PROMPT.txt and paste it into ChatGPT or Claude as your first message.");
+            println!(
+                "2. Copy the text in COPY_THIS_PROMPT.txt and paste it into ChatGPT or Claude as your first message."
+            );
             println!("3. Attach all centaur_context_part*.txt files to the same message.");
             println!("4. Send the message and wait for the AI to reply with code edits.");
-            println!("5. Run 'centaur' again — it will detect the AI reply in your clipboard and apply it.");
+            println!(
+                "5. Run 'centaur' again — it will detect the AI reply in your clipboard and apply it."
+            );
 
             if config.export.open_export_directory {
                 the_clipboard_centaur::ui::open_directory(export_dir);
             }
         } else {
-            println!("\n--- HOW TO USE ({} upload messages required) ---", result.summary.total_batches);
-            println!("1. Copy COPY_THIS_PROMPT.txt and paste it into ChatGPT/Claude as your first message.");
+            println!(
+                "\n--- HOW TO USE ({} upload messages required) ---",
+                result.summary.total_batches
+            );
+            println!(
+                "1. Copy COPY_THIS_PROMPT.txt and paste it into ChatGPT/Claude as your first message."
+            );
             println!("2. Attach files from batch_01/ to the same message and send.");
             for b in 2..=result.summary.total_batches {
                 if b == result.summary.total_batches {
-                    println!("{}. Attach files from batch_{:02}/ — this is the FINAL batch. The AI will begin once received.", b + 1, b);
+                    println!(
+                        "{}. Attach files from batch_{:02}/ — this is the FINAL batch. The AI will begin once received.",
+                        b + 1,
+                        b
+                    );
                 } else {
-                    println!("{}. After the AI acknowledges batch {}, attach files from batch_{:02}/ and send.", b + 1, b - 1, b);
+                    println!(
+                        "{}. After the AI acknowledges batch {}, attach files from batch_{:02}/ and send.",
+                        b + 1,
+                        b - 1,
+                        b
+                    );
                 }
             }
             if config.export.open_export_directory {
@@ -579,7 +751,9 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        println!("Paste the output from ChatGPT below, then press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) to execute:\n");
+        println!(
+            "Paste the output from ChatGPT below, then press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) to execute:\n"
+        );
         let mut text = String::new();
         let _ = io::stdin().read_to_string(&mut text);
         text
@@ -615,7 +789,9 @@ fn main() -> ExitCode {
                 match res {
                     ApplyResult::Created(path) => println!("✅ Created new file: {}", path),
                     ApplyResult::Updated(path) => println!("✅ Successfully updated: {}", path),
-                    ApplyResult::DryRunSimulated(path) => println!("🔍 [DRY-RUN] Valid patch match for file: {}", path),
+                    ApplyResult::DryRunSimulated(path) => {
+                        println!("🔍 [DRY-RUN] Valid patch match for file: {}", path)
+                    }
                     ApplyResult::IoError(path, err) => {
                         io_failures += 1;
                         eprintln!("❌ Could not write {}: {}", path, err);
@@ -631,7 +807,13 @@ fn main() -> ExitCode {
         }
         Err((failures, msg)) => {
             eprintln!("❌ ERROR: {}", msg);
-            let resolved_llm = args.llm.map(|m| if m.eq_ignore_ascii_case("auto") { resolve_auto_llm() } else { m });
+            let resolved_llm = args.llm.map(|m| {
+                if m.eq_ignore_ascii_case("auto") {
+                    resolve_auto_llm()
+                } else {
+                    m
+                }
+            });
             let mut recovered_all = resolved_llm.is_some();
 
             for fail in failures {
@@ -640,7 +822,8 @@ fn main() -> ExitCode {
                         eprintln!("  - Could not match cleanly in {}", path);
                         match (&resolved_llm, blocks.iter().find(|b| b.file_path == path)) {
                             (Some(model), Some(b)) => {
-                                recovered_all &= apply_with_llm(model, &path, &b.search, &b.replace);
+                                recovered_all &=
+                                    apply_with_llm(model, &path, &b.search, &b.replace);
                             }
                             _ => recovered_all = false,
                         }

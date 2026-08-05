@@ -10,7 +10,7 @@ The Clipboard Centaur is a Rust CLI that exports local repository context for br
 - Test: `cargo test --all-targets --locked`
 - Focus a test: `cargo test <test_name> --locked`
 - CLI help: `cargo run -- --help`
-- Format a touched Rust file: `rustfmt --edition 2024 path/to/file.rs`
+- Format a touched Rust file: `rustfmt --edition 2026 path/to/file.rs`
 - Inspect lints: `cargo clippy --all-targets --all-features`
 
 The test command is the required gate. Do not introduce a repository-wide formatting-only diff alongside functional work; the current formatting baseline is tracked in [`docs/ROADMAP.md`](https://github.com/DevT02/centaur/blob/master/docs/ROADMAP.md).

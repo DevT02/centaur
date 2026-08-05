@@ -1,5 +1,5 @@
-use crate::history::{BackupFileRecord, PatchSessionRecord};
 use crate::PatchBlock;
+use crate::history::{BackupFileRecord, PatchSessionRecord};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -21,14 +21,24 @@ pub fn is_safe_path(base_dir: &Path, rel_path_str: &str) -> Result<PathBuf, Stri
     let p = Path::new(rel_path_str);
     // is_absolute() alone misses root-relative ("\foo") and Windows drive-relative
     // ("C:foo") paths, both of which discard the base when joined.
-    if p.is_absolute() || p.has_root() || p.components().next().is_some_and(|c| matches!(c, Component::Prefix(_))) {
+    if p.is_absolute()
+        || p.has_root()
+        || p.components()
+            .next()
+            .is_some_and(|c| matches!(c, Component::Prefix(_)))
+    {
         return Err(format!("Absolute paths are forbidden: {}", rel_path_str));
     }
     let combined = base_dir.join(p);
     if combined.exists() {
-        if let (Ok(canon_base), Ok(canon_combined)) = (base_dir.canonicalize(), combined.canonicalize()) {
+        if let (Ok(canon_base), Ok(canon_combined)) =
+            (base_dir.canonicalize(), combined.canonicalize())
+        {
             if !canon_combined.starts_with(&canon_base) {
-                return Err(format!("Security Violation: Symlink points outside root ({})", rel_path_str));
+                return Err(format!(
+                    "Security Violation: Symlink points outside root ({})",
+                    rel_path_str
+                ));
             }
         }
     }
@@ -42,7 +52,10 @@ pub struct MemoryPatchPlan {
     pub is_new_file: bool,
 }
 
-pub fn evaluate_patch_block(base_dir: &Path, block: &PatchBlock) -> Result<MemoryPatchPlan, ApplyResult> {
+pub fn evaluate_patch_block(
+    base_dir: &Path,
+    block: &PatchBlock,
+) -> Result<MemoryPatchPlan, ApplyResult> {
     let target_path = match is_safe_path(base_dir, &block.file_path) {
         Ok(p) => p,
         Err(err) => return Err(ApplyResult::SecurityError(err)),
@@ -290,7 +303,10 @@ pub fn apply_blocks_transactional(
             }
         }
 
-        if let Some(plan_index) = plans.iter().position(|plan| plan.target_path == target_path) {
+        if let Some(plan_index) = plans
+            .iter()
+            .position(|plan| plan.target_path == target_path)
+        {
             match apply_to_content(&plans[plan_index].new_content, block) {
                 Ok(updated) => plans[plan_index].new_content = updated,
                 Err(result) => failures.push(result),
@@ -339,14 +355,20 @@ pub fn apply_blocks_transactional(
     for plan in plans {
         if let Some(parent) = plan.target_path.parent() {
             if let Err(e) = fs::create_dir_all(parent) {
-                results.push(ApplyResult::IoError(plan.block.file_path.clone(), e.to_string()));
+                results.push(ApplyResult::IoError(
+                    plan.block.file_path.clone(),
+                    e.to_string(),
+                ));
                 continue;
             }
         }
 
         let temp_path = plan.target_path.with_extension("centaur_tmp");
         if let Err(e) = fs::write(&temp_path, &plan.new_content) {
-            results.push(ApplyResult::IoError(plan.block.file_path.clone(), e.to_string()));
+            results.push(ApplyResult::IoError(
+                plan.block.file_path.clone(),
+                e.to_string(),
+            ));
             continue;
         }
 
@@ -354,7 +376,10 @@ pub fn apply_blocks_transactional(
             // Fallback copy if rename fails across filesystems
             if let Err(e_copy) = fs::copy(&temp_path, &plan.target_path) {
                 let _ = fs::remove_file(&temp_path);
-                results.push(ApplyResult::IoError(plan.block.file_path.clone(), e_copy.to_string()));
+                results.push(ApplyResult::IoError(
+                    plan.block.file_path.clone(),
+                    e_copy.to_string(),
+                ));
                 continue;
             }
             let _ = fs::remove_file(&temp_path);
@@ -399,7 +424,10 @@ mod tests {
         let res = apply_blocks_transactional(dir.path(), &blocks, false).unwrap();
         assert_eq!(res.len(), 2);
         assert_eq!(fs::read_to_string(&file1).unwrap(), "bar\n");
-        assert_eq!(fs::read_to_string(dir.path().join("f2.txt")).unwrap(), "created");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("f2.txt")).unwrap(),
+            "created"
+        );
     }
 
     #[test]

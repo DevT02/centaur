@@ -1,0 +1,59 @@
+{
+  "name": "centaur-vscode",
+  "displayName": "The Clipboard Centaur",
+  "description": "1-click Search/Replace patch application and context exports for VS Code",
+  "version": "0.1.0",
+  "publisher": "centaur",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onCommand:centaur.applyClipboard",
+    "onCommand:centaur.undo",
+    "onCommand:centaur.export"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "centaur.applyClipboard",
+        "title": "Centaur: Apply Clipboard Patch",
+        "category": "Centaur",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "centaur.undo",
+        "title": "Centaur: Undo Last Patch",
+        "category": "Centaur",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "centaur.export",
+        "title": "Centaur: Export Context for AI",
+        "category": "Centaur",
+        "icon": "$(export)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "centaur.applyClipboard",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v"
+      },
+      {
+        "command": "centaur.undo",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u"
+      },
+      {
+        "command": "centaur.export",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      }
+    ]
+  }
+}

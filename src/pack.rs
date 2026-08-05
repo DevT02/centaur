@@ -88,16 +88,16 @@ pub fn sort_files_by_priority(files: &mut [PathBuf]) {
     files.sort_by(|a, b| {
         let p_a = priority_rank(a);
         let p_b = priority_rank(b);
-        if p_a != p_b {
-            p_a.cmp(&p_b)
-        } else {
-            a.cmp(b)
-        }
+        if p_a != p_b { p_a.cmp(&p_b) } else { a.cmp(b) }
     });
 }
 
 fn priority_rank(path: &Path) -> usize {
-    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
     let path_str = path.to_string_lossy().to_lowercase();
 
     // 0: Manifests & core config
@@ -112,15 +112,26 @@ fn priority_rank(path: &Path) -> usize {
     }
 
     // 1: Primary source files
-    if path_str.contains("/src/") || path_str.contains("\\src\\") || path_str.contains("src/")
-        || path_str.contains("/lib/") || path_str.contains("\\lib\\")
-        || name.ends_with(".rs") || name.ends_with(".ts") || name.ends_with(".js") || name.ends_with(".py") || name.ends_with(".go")
+    if path_str.contains("/src/")
+        || path_str.contains("\\src\\")
+        || path_str.contains("src/")
+        || path_str.contains("/lib/")
+        || path_str.contains("\\lib\\")
+        || name.ends_with(".rs")
+        || name.ends_with(".ts")
+        || name.ends_with(".js")
+        || name.ends_with(".py")
+        || name.ends_with(".go")
     {
         return 1;
     }
 
     // 2: Unit / Integration tests
-    if path_str.contains("test") || name.contains("test") || name.ends_with(".spec.ts") || name.ends_with(".spec.js") {
+    if path_str.contains("test")
+        || name.contains("test")
+        || name.ends_with(".spec.ts")
+        || name.ends_with(".spec.js")
+    {
         return 2;
     }
 
@@ -134,8 +145,15 @@ fn priority_rank(path: &Path) -> usize {
 }
 
 pub fn is_repetitive_or_generated(path: &Path, content: &str) -> bool {
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-    if file_name.starts_with("massive_") || file_name.ends_with(".min.js") || file_name.ends_with(".map") {
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+    if file_name.starts_with("massive_")
+        || file_name.ends_with(".min.js")
+        || file_name.ends_with(".map")
+    {
         return true;
     }
 
@@ -249,7 +267,10 @@ pub fn pack_files_dynamic(
             let preview: String = content.chars().take(100).collect();
             let summary = format!(
                 "File omitted from full context:\nPath: {}\nSize: {} bytes\nReason: highly repetitive generated/test content\nSHA-256: {}\nPreview: {}...\n\n",
-                rel_str, content.len(), checksum, preview.replace('\n', " ")
+                rel_str,
+                content.len(),
+                checksum,
+                preview.replace('\n', " ")
             );
             packed_files.push(PackedFile {
                 relative_path: rel_str,
@@ -304,25 +325,33 @@ pub fn pack_files_dynamic(
     let max_attachment_chars = options.max_attachment_chars.max(10_000);
     let max_attachments_per_message = options.max_attachments_per_message.max(1);
 
-    let parts_needed_by_size = total_chars.div_ceil(max_attachment_chars).max(1);
-    let parts_for_first_message = parts_needed_by_size.min(max_attachments_per_message);
-    let effective_chunk_limit = (total_chars.div_ceil(parts_for_first_message))
-        .min(max_attachment_chars)
-        .max(10_000);
+    // Reserve 2KB margin for headers/footers. This comes off the ceiling before the
+    // split is planned: subtracting it afterwards shrank a limit that was already
+    // exactly total_chars, so the last block always overflowed by up to 2KB and a
+    // content-free part holding only the directory map was emitted ahead of it.
+    let usable_chunk_chars = max_attachment_chars.saturating_sub(2048).max(5000);
 
-    // Reserve 2KB margin for headers/footers
-    let target_chunk_limit = effective_chunk_limit.saturating_sub(2048).max(5000);
+    let parts_needed_by_size = total_chars.div_ceil(usable_chunk_chars).max(1);
+    let parts_for_first_message = parts_needed_by_size.min(max_attachments_per_message);
+    let target_chunk_limit = (total_chars.div_ceil(parts_for_first_message))
+        .min(usable_chunk_chars)
+        .max(5000);
 
     let mut raw_chunks: Vec<String> = Vec::new();
     let mut current_chunk = String::new();
     current_chunk.push_str(&tree_str);
 
+    // The directory map opens the first chunk. On its own it is not a part worth
+    // spending an attachment or a round trip on, so the first block joins it even
+    // when that overruns the target.
+    let mut chunk_holds_a_file = false;
+
     for block in file_blocks {
-        if current_chunk.len() + block.len() > target_chunk_limit && !current_chunk.is_empty() {
-            raw_chunks.push(current_chunk);
-            current_chunk = String::new();
+        if current_chunk.len() + block.len() > target_chunk_limit && chunk_holds_a_file {
+            raw_chunks.push(std::mem::take(&mut current_chunk));
         }
         current_chunk.push_str(&block);
+        chunk_holds_a_file = true;
     }
     if !current_chunk.is_empty() {
         raw_chunks.push(current_chunk);
@@ -390,7 +419,12 @@ pub fn pack_files_dynamic(
 
     let manifest_json = format!(
         "{{\n  \"session_id\": \"{}\",\n  \"total_files\": {},\n  \"total_chars\": {},\n  \"estimated_tokens\": {},\n  \"total_parts\": {},\n  \"total_batches\": {}\n}}",
-        options.session_id, summary.total_files, summary.total_chars, summary.estimated_tokens, summary.total_parts, summary.total_batches
+        options.session_id,
+        summary.total_files,
+        summary.total_chars,
+        summary.estimated_tokens,
+        summary.total_parts,
+        summary.total_batches
     );
 
     PackResult {
@@ -418,6 +452,32 @@ mod tests {
         assert_eq!(paths[1], PathBuf::from("src/main.rs"));
         assert_eq!(paths[2], PathBuf::from("tests/test.rs"));
         assert_eq!(paths[3], PathBuf::from("README.md"));
+    }
+
+    /// One file that comfortably fits the ceiling used to be split in two: the
+    /// header margin was taken off a limit already equal to the total, leaving a
+    /// first part that held nothing but the directory map.
+    #[test]
+    fn a_file_under_the_ceiling_is_not_split_off_from_the_directory_map() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("main.rs");
+        fs::write(&file, "fn main() {}\n".repeat(700)).unwrap();
+
+        let result = pack_files_dynamic(
+            vec![file],
+            dir.path(),
+            PackOptions {
+                max_attachment_chars: 200_000,
+                max_attachments_per_message: 1,
+                ..PackOptions::default()
+            },
+        );
+
+        assert_eq!(
+            result.summary.total_parts, 1,
+            "9KB should not need two parts"
+        );
+        assert!(result.chunks[0].content.contains("fn main() {}"));
     }
 
     #[test]
@@ -453,7 +513,11 @@ mod tests {
         let options = PackOptions::default();
         let result = pack_files_dynamic(vec![lock], dir.path(), options);
         assert_eq!(result.summary.skipped_files.len(), 1);
-        assert!(result.summary.skipped_files[0].reason.contains("Lockfile skipped"));
+        assert!(
+            result.summary.skipped_files[0]
+                .reason
+                .contains("Lockfile skipped")
+        );
     }
 
     #[test]
@@ -469,7 +533,11 @@ mod tests {
 
         let result = pack_files_dynamic(vec![fixture], dir.path(), options);
         assert_eq!(result.chunks.len(), 1);
-        assert!(result.chunks[0].content.contains("File omitted from full context"));
+        assert!(
+            result.chunks[0]
+                .content
+                .contains("File omitted from full context")
+        );
         assert!(result.chunks[0].content.contains("massive_data.txt"));
     }
 }

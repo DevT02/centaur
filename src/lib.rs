@@ -1,4 +1,5 @@
 pub mod config;
+pub mod doctor;
 pub mod export;
 pub mod git;
 pub mod history;
@@ -8,6 +9,7 @@ pub mod patch;
 pub mod prompt;
 pub mod review;
 pub mod secrets;
+pub mod skill;
 pub mod ui;
 
 use regex::Regex;
@@ -15,10 +17,10 @@ use std::sync::LazyLock;
 
 pub use config::CentaurConfig;
 pub use git::ExportMode;
-pub use pack::{pack_files_dynamic, PackOptions, PackResult};
-pub use patch::{apply_blocks_transactional, ApplyResult};
+pub use pack::{PackOptions, PackResult, pack_files_dynamic};
+pub use patch::{ApplyResult, apply_blocks_transactional};
 pub use prompt::{get_prompt_template, render_prompt};
-pub use review::{summarize_patch_blocks, PatchFileSummary};
+pub use review::{PatchFileSummary, summarize_patch_blocks};
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -71,7 +73,10 @@ pub fn parse_blocks(text: &str) -> Vec<PatchBlock> {
         raw_blocks = parse_blocks_state_machine(text);
     }
 
-    raw_blocks.into_iter().filter_map(clean_patch_block).collect()
+    raw_blocks
+        .into_iter()
+        .filter_map(clean_patch_block)
+        .collect()
 }
 
 /// Count SEARCH markers, tolerating the delimiter typos models actually make
@@ -85,7 +90,7 @@ pub fn count_search_markers(text: &str) -> usize {
 
 pub fn clean_patch_block(mut block: PatchBlock) -> Option<PatchBlock> {
     let mut path = block.file_path.trim().to_string();
-    
+
     // Strip surrounding quotes or backticks
     if (path.starts_with('`') && path.ends_with('`'))
         || (path.starts_with('"') && path.ends_with('"'))
@@ -179,7 +184,10 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
         let trimmed = line.trim();
         match state {
             State::LookingForFile => {
-                if trimmed.starts_with("File:") || trimmed.starts_with("file:") || trimmed.starts_with("Path:") {
+                if trimmed.starts_with("File:")
+                    || trimmed.starts_with("file:")
+                    || trimmed.starts_with("Path:")
+                {
                     let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
                     if parts.len() == 2 {
                         current_file = parts[1].trim().to_string();
@@ -191,7 +199,10 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
                 if trimmed == "<<<<<<< SEARCH" {
                     current_search.clear();
                     state = State::InSearch;
-                } else if trimmed.starts_with("File:") || trimmed.starts_with("file:") || trimmed.starts_with("Path:") {
+                } else if trimmed.starts_with("File:")
+                    || trimmed.starts_with("file:")
+                    || trimmed.starts_with("Path:")
+                {
                     let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
                     if parts.len() == 2 {
                         current_file = parts[1].trim().to_string();
@@ -275,7 +286,11 @@ fn new() {}
         let input = "File: a.rs\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n\n\
                      File: b.rs\n<<<<<< SEARCH\nold b\n=======\nnew b\n>>>>>> REPLACE\n";
         assert_eq!(parse_blocks(input).len(), 1);
-        assert_eq!(count_search_markers(input), 2, "both markers should be seen");
+        assert_eq!(
+            count_search_markers(input),
+            2,
+            "both markers should be seen"
+        );
     }
 
     #[test]

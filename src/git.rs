@@ -60,7 +60,13 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
     }
 
     // Always include project manifests if they exist
-    let manifests = ["Cargo.toml", "package.json", "pyproject.toml", "README.md", "Makefile"];
+    let manifests = [
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "README.md",
+        "Makefile",
+    ];
     for m in manifests {
         let p = root.join(m);
         if p.exists() && p.is_file() && !files.contains(&p) {
