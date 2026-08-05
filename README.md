@@ -39,34 +39,24 @@ cargo install --path .
 ## Workflow Architecture
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#f6f8fa',
-    'primaryTextColor': '#24292e',
-    'primaryBorderColor': '#d0d7de',
-    'lineColor': '#57606a',
-    'fontFamily': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-  }
-}}%%
 flowchart LR
-    subgraph Repo ["📁 my-project/ Repository"]
-        CodeBase["📄 src/main.rs<br/>src/auth.rs"]
-        History["📸 .centaur/ Snapshot Store"]
+    subgraph Repo ["my-project/ Repository"]
+        CodeBase["src/main.rs and src/auth.rs"]
+        History[".centaur/ Snapshot Store"]
     end
 
-    subgraph Browser ["🌐 Web Browser Tab Workflow"]
-        CmdExport["1. 💻 centaur --export --mode changed"] --> ContextFiles["2. 📎 COPY_THIS_PROMPT.txt<br/>centaur_context_part1.txt"]
-        ContextFiles --> AIReply["3. 🤖 Web AI Output<br/><code>File: src/auth.rs<br/>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH<br/>...<br/>=======<br/>...<br/>&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code>"]
-        AIReply --> CmdApply["4. 📋 centaur --clipboard"]
+    subgraph Browser ["Web Browser Tab Workflow"]
+        CmdExport["1. centaur --export --mode changed"] --> ContextFiles["2. Attach context files and prompt"]
+        ContextFiles --> AIReply["3. Web AI outputs Search/Replace block"]
+        AIReply --> CmdApply["4. centaur --clipboard"]
     end
 
-    subgraph IDEExt ["🧩 VS Code Extension (editors/vscode)"]
-        Shortcut["⚡ Ctrl+Alt+V / Status Bar Button"] --> ExtAction["🔌 centaur.applyClipboard"]
+    subgraph IDEExt ["VS Code Extension (editors/vscode)"]
+        Shortcut["Ctrl+Alt+V or Status Bar"] --> ExtAction["centaur.applyClipboard"]
     end
 
-    subgraph MCPClient ["🖥️ Desktop App / MCP Workflow"]
-        SlashCmd["⚡ /centaur Slash Command"] --> MCPTools["🔌 MCP Tools<br/><code>get_context()<br/>apply_patch()<br/>undo()</code>"]
+    subgraph MCPClient ["Desktop App / MCP Workflow"]
+        SlashCmd["/centaur Slash Command"] --> MCPTools["MCP Tools: get_context, apply_patch, undo"]
     end
 
     CmdApply -->|Validate & Write| CodeBase
@@ -80,27 +70,17 @@ flowchart LR
 Here is how Centaur inspects a project workspace (`my-project/`) and parses patch blocks back into your source code:
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#f6f8fa',
-    'primaryTextColor': '#24292e',
-    'primaryBorderColor': '#d0d7de',
-    'lineColor': '#8c959f',
-    'fontFamily': 'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace'
-  }
-}}%%
 flowchart TD
-    subgraph RepoTree ["📁 my-project/ Directory Structure"]
-        Dir["my-project/<br/>├── src/<br/>│   ├── main.rs (Entrypoint)<br/>│   └── auth.rs (Auth module)<br/>├── Cargo.toml<br/>└── .centaur/ (Session history & snapshots)"]
+    subgraph RepoTree ["my-project/ Directory Structure"]
+        Dir["my-project/\n├── src/\n│   ├── main.rs\n│   └── auth.rs\n├── Cargo.toml\n└── .centaur/"]
     end
 
-    subgraph File1 ["📄 src/main.rs"]
-        Content1["<code>fn main() {<br/>    println!('Starting server...');<br/>    auth::init();<br/>}</code>"]
+    subgraph File1 ["src/main.rs"]
+        Content1["fn main() {\n    auth::init();\n}"]
     end
 
-    subgraph File2 ["📄 src/auth.rs (Search/Replace Block Example)"]
-        Content2["<code>File: src/auth.rs<br/>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH<br/>pub fn init() {<br/>    // TODO: implement auth<br/>}<br/>=======<br/>pub fn init() -&gt; Result&lt;()&gt; {<br/>    println!('Auth initialized');<br/>    Ok(())<br/>}<br/>&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code>"]
+    subgraph File2 ["src/auth.rs"]
+        Content2["Patch Action:\nSEARCH: pub fn init() {}\nREPLACE: pub fn init() -> Result<()> {}"]
     end
 
     RepoTree --> File1
