@@ -114,6 +114,9 @@ mod tests {
     fn defaults_round_trip_through_toml() {
         let text = toml::to_string_pretty(&CentaurConfig::default()).unwrap();
         let back: CentaurConfig = toml::from_str(&text).unwrap();
-        assert_eq!(back.export.max_attachment_chars, default_max_attachment_chars());
+        assert_eq!(
+            back.export.max_attachment_chars,
+            default_max_attachment_chars()
+        );
     }
 }

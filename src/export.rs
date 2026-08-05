@@ -4,10 +4,10 @@
 //! drifted apart three ways: redaction existed only in the TUI, the two used
 //! different skip filters, and they named the export directory differently.
 
-use crate::git::{get_changed_files, get_staged_files, is_git_repo, ExportMode};
-use crate::pack::{pack_files_dynamic, walk_workspace, PackOptions, PackResult};
+use crate::git::{ExportMode, get_changed_files, get_staged_files, is_git_repo};
+use crate::pack::{PackOptions, PackResult, pack_files_dynamic, walk_workspace};
 use crate::prompt::render_prompt;
-use crate::secrets::{redact_secrets, scan_file_for_secrets, SecretWarning};
+use crate::secrets::{SecretWarning, redact_secrets, scan_file_for_secrets};
 use arboard::Clipboard;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,11 @@ use std::path::{Path, PathBuf};
 /// Files Centaur itself generates. Feeding them back into an export compounds
 /// context on every run.
 fn is_centaur_artifact(path: &Path) -> bool {
-    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     name.starts_with("centaur_context_part")
         || name == "COPY_THIS_PROMPT.txt"
         || name == "manifest.json"
@@ -47,7 +51,11 @@ pub fn collect_files(root: &Path, mode: ExportMode, paths: &[String]) -> Vec<Pat
                 continue;
             }
             // Absolute paths keep strip_prefix reliable for both packing and redaction.
-            files.push(if p.is_absolute() { p.to_path_buf() } else { root.join(p) });
+            files.push(if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                root.join(p)
+            });
         }
     }
     files
@@ -56,7 +64,11 @@ pub fn collect_files(root: &Path, mode: ExportMode, paths: &[String]) -> Vec<Pat
 pub fn scan_files(files: &[PathBuf]) -> Vec<SecretWarning> {
     files
         .iter()
-        .filter_map(|p| fs::read_to_string(p).ok().map(|c| scan_file_for_secrets(p, &c)))
+        .filter_map(|p| {
+            fs::read_to_string(p)
+                .ok()
+                .map(|c| scan_file_for_secrets(p, &c))
+        })
         .flatten()
         .collect()
 }
@@ -89,12 +101,17 @@ fn redact_into(files: &[PathBuf], root: &Path, dest: &Path) -> Result<Vec<PathBu
             .map_err(|_| format!("Export path is outside the workspace: {}", source.display()))?;
         let target = dest.join(relative);
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Could not create export folder: {}", e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create export folder: {}", e))?;
         }
 
         let written = match fs::read_to_string(source) {
             Ok(content) => {
-                let name = source.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = source
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let cleaned = if name == ".env" || name.starts_with(".env.") {
                     redact_secrets(&redact_env_values(&content))
                 } else {
@@ -141,7 +158,8 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
 
     let (files, pack_root) = match &redact_dir {
         Some(dir) => {
-            fs::create_dir_all(dir).map_err(|e| format!("Could not prepare safe export copy: {}", e))?;
+            fs::create_dir_all(dir)
+                .map_err(|e| format!("Could not prepare safe export copy: {}", e))?;
             match redact_into(&files, &req.root, dir) {
                 Ok(copies) => (copies, dir.clone()),
                 Err(e) => {
@@ -168,7 +186,8 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
     // Named by session id: unique per run, so no guessable path to clobber and no
     // need to recursively delete whatever already sits there.
     let export_dir = std::env::temp_dir().join(format!("centaur_export_{}", req.pack.session_id));
-    fs::create_dir_all(&export_dir).map_err(|e| format!("Could not create export directory: {}", e))?;
+    fs::create_dir_all(&export_dir)
+        .map_err(|e| format!("Could not create export directory: {}", e))?;
 
     fn write(errors: &mut Vec<String>, path: PathBuf, data: &str) {
         if let Err(e) = fs::write(&path, data) {
@@ -177,8 +196,16 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
     }
 
     let mut write_errors = Vec::new();
-    write(&mut write_errors, export_dir.join("COPY_THIS_PROMPT.txt"), &prompt);
-    write(&mut write_errors, export_dir.join("manifest.json"), &result.manifest_json);
+    write(
+        &mut write_errors,
+        export_dir.join("COPY_THIS_PROMPT.txt"),
+        &prompt,
+    );
+    write(
+        &mut write_errors,
+        export_dir.join("manifest.json"),
+        &result.manifest_json,
+    );
 
     let single_batch = result.summary.total_batches == 1;
     for chunk in &result.chunks {
@@ -238,15 +265,27 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
 
-        assert!(names.contains(&".env".to_string()), "dotfiles must be visible: {:?}", names);
+        assert!(
+            names.contains(&".env".to_string()),
+            "dotfiles must be visible: {:?}",
+            names
+        );
         assert!(names.contains(&"main.rs".to_string()));
-        assert!(!names.contains(&"config".to_string()), ".git must stay excluded: {:?}", names);
+        assert!(
+            !names.contains(&"config".to_string()),
+            ".git must stay excluded: {:?}",
+            names
+        );
     }
 
     #[test]
     fn redaction_keeps_secrets_out_of_the_export() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join(".env"), "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n# note\n").unwrap();
+        fs::write(
+            dir.path().join(".env"),
+            "AWS_KEY=AKIAIOSFODNN7EXAMPLE\n# note\n",
+        )
+        .unwrap();
 
         let files = collect_files(dir.path(), ExportMode::Full, &[]);
         let req = ExportRequest {
@@ -257,14 +296,29 @@ mod tests {
             pack: opts(dir.path()),
         };
         let out = run(&req, files).unwrap();
-        let packed: String = out.result.chunks.iter().map(|c| c.content.clone()).collect();
+        let packed: String = out
+            .result
+            .chunks
+            .iter()
+            .map(|c| c.content.clone())
+            .collect();
 
-        assert!(!packed.contains("AKIAIOSFODNN7EXAMPLE"), "secret leaked into export");
+        assert!(
+            !packed.contains("AKIAIOSFODNN7EXAMPLE"),
+            "secret leaked into export"
+        );
         assert!(packed.contains("[REDACTED_ENV_VALUE_BY_CENTAUR]"));
-        assert!(packed.contains("# note"), "comments should survive redaction");
+        assert!(
+            packed.contains("# note"),
+            "comments should survive redaction"
+        );
         assert!(out.write_errors.is_empty());
         // The workspace copy must be untouched.
-        assert!(fs::read_to_string(dir.path().join(".env")).unwrap().contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(
+            fs::read_to_string(dir.path().join(".env"))
+                .unwrap()
+                .contains("AKIAIOSFODNN7EXAMPLE")
+        );
     }
 
     #[test]

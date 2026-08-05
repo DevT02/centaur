@@ -9,20 +9,34 @@
 //! Nothing here may print to stdout except JSON-RPC. Diagnostics go to stderr,
 //! which MCP clients treat as a log stream.
 
+use crate::export::{collect_files, scan_files};
+use crate::git::ExportMode;
 use crate::history::PatchSessionRecord;
-use crate::patch::{apply_blocks_transactional, ApplyResult};
+use crate::pack::{PackOptions, pack_files_dynamic};
+use crate::patch::{ApplyResult, apply_blocks_transactional, is_safe_path};
+use crate::secrets::redact_secrets;
 use crate::{count_search_markers, parse_blocks};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 /// Used only when a client omits its own version during initialize.
-const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+const DEFAULT_PROTOCOL_VERSION: &str = "2026-11-05";
+
+/// Characters of repository text per `get_context` response. A tool result lands
+/// directly in the model's context, so a whole repository is paged rather than
+/// returned at once; roughly 65k tokens per part at Centaur's 3-chars-per-token
+/// estimate.
+const CONTEXT_PART_CHARS: usize = 200_000;
 
 pub fn serve(workspace: &Path) -> Result<(), String> {
     let root = workspace.canonicalize().map_err(|e| {
-        format!("Could not resolve workspace '{}': {}", workspace.display(), e)
+        format!(
+            "Could not resolve workspace '{}': {}",
+            workspace.display(),
+            e
+        )
     })?;
 
     eprintln!("centaur mcp: serving {}", root.display());
@@ -39,7 +53,10 @@ pub fn serve(workspace: &Path) -> Result<(), String> {
         let request: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(e) => {
-                send(&mut stdout, &error_response(Value::Null, -32700, &e.to_string()))?;
+                send(
+                    &mut stdout,
+                    &error_response(Value::Null, -32700, &e.to_string()),
+                )?;
                 continue;
             }
         };
@@ -57,7 +74,10 @@ pub fn serve(workspace: &Path) -> Result<(), String> {
 }
 
 fn dispatch(root: &Path, id: &Value, request: &Value) -> Value {
-    let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let params = request.get("params").cloned().unwrap_or(Value::Null);
 
     match method {
@@ -79,8 +99,14 @@ fn dispatch(root: &Path, id: &Value, request: &Value) -> Value {
         }
         "tools/list" => result_response(id, json!({ "tools": tool_definitions() })),
         "tools/call" => {
-            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let (text, is_error) = call_tool(root, name, &arguments);
             result_response(
                 id,
@@ -96,6 +122,43 @@ fn dispatch(root: &Path, id: &Value, request: &Value) -> Value {
 
 fn tool_definitions() -> Value {
     json!([
+        {
+            "name": "get_context",
+            "description": "Read the Centaur workspace: returns the project's directory map and \
+                            file contents, ready to reason over. Call this before apply_patch so \
+                            the Search text you write matches the file exactly. Large projects \
+                            come back in numbered parts; keep calling with the next 'part' until \
+                            you have them all.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["full", "changed", "staged", "compact"],
+                        "description": "full: every eligible file (default). changed: files \
+                                        modified or untracked in Git. staged: staged files only. \
+                                        compact: full, but generated and repetitive files are \
+                                        replaced by short summaries."
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Restrict a full or compact read to these workspace-relative \
+                                        files and directories. Omit to read everything."
+                    },
+                    "part": {
+                        "type": "integer",
+                        "description": "Which part to return, starting at 1. Default 1."
+                    },
+                    "redact": {
+                        "type": "boolean",
+                        "description": "Replace detected credentials with placeholders. Default \
+                                        false; a patch whose Search text covers a redacted line \
+                                        will not match."
+                    }
+                }
+            }
+        },
         {
             "name": "apply_patch",
             "description": "Apply Search/Replace blocks to the Centaur workspace. Every block is \
@@ -141,10 +204,145 @@ fn tool_definitions() -> Value {
 /// JSON-RPC errors.
 pub(crate) fn call_tool(root: &Path, name: &str, arguments: &Value) -> (String, bool) {
     match name {
+        "get_context" => get_context(root, arguments),
         "apply_patch" => apply_patch(root, arguments),
         "undo" => undo(root, arguments),
         _ => (format!("Unknown tool: {}", name), true),
     }
+}
+
+/// Reads the workspace back to the model. Without this the server is write-only:
+/// a client with no filesystem of its own could apply patches but had no way to
+/// see what it was patching, so the user still had to run a CLI export by hand.
+fn get_context(root: &Path, arguments: &Value) -> (String, bool) {
+    let mode = match arguments
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("full")
+    {
+        "full" => ExportMode::Full,
+        "changed" => ExportMode::Changed,
+        "staged" => ExportMode::Staged,
+        "compact" => ExportMode::Compact,
+        other => {
+            return (
+                format!(
+                    "Unknown mode '{}'. Use full, changed, staged, or compact.",
+                    other
+                ),
+                true,
+            );
+        }
+    };
+
+    // These paths come from the model, so they get the containment check that patch
+    // targets get. collect_files would otherwise walk an absolute path out of the
+    // workspace, which is exactly the invariant a fixed workspace root exists to hold.
+    let mut paths = Vec::new();
+    if let Some(values) = arguments.get("paths").and_then(Value::as_array) {
+        for value in values {
+            let Some(text) = value.as_str() else {
+                return ("Every entry in 'paths' must be a string.".to_string(), true);
+            };
+            match is_safe_path(root, text) {
+                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
+                Err(e) => return (format!("refused: {}", e), true),
+            }
+        }
+    }
+
+    let files = collect_files(root, mode, &paths);
+    if files.is_empty() {
+        return (
+            "No files matched. In 'changed' or 'staged' mode this means the Git working tree is \
+             clean; use mode 'full' to read the whole project."
+                .to_string(),
+            false,
+        );
+    }
+
+    let warnings = scan_files(&files);
+    let redact = arguments
+        .get("redact")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    // Packing is repeated per part rather than cached, so paging a repository is
+    // quadratic in the number of parts. At repository scale the walk is far cheaper
+    // than the model's own read of the result; cache by session id if that changes.
+    let result = pack_files_dynamic(
+        files,
+        root,
+        PackOptions {
+            max_attachment_chars: CONTEXT_PART_CHARS,
+            // One part per response. The model pages with `part` instead of batching.
+            max_attachments_per_message: 1,
+            is_compact_mode: mode == ExportMode::Compact,
+            project_root_name: root
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            ..PackOptions::default()
+        },
+    );
+
+    let part = arguments.get("part").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let Some(chunk) = result.chunks.get(part.saturating_sub(1)) else {
+        return (
+            format!(
+                "Part {} does not exist; this read has {} part(s).",
+                part,
+                result.chunks.len()
+            ),
+            true,
+        );
+    };
+
+    let mut report = String::new();
+
+    // Only on the first part: repeating these on every page wastes context.
+    if part <= 1 {
+        if !warnings.is_empty() && !redact {
+            report.push_str(
+                "warning: possible credentials in this context. Do not repeat these values back, \
+                 and tell the user they were sent. Call again with redact=true to mask them.\n",
+            );
+            for warning in &warnings {
+                report.push_str(&format!(
+                    "  {}: {}\n",
+                    warning.file_path, warning.pattern_name
+                ));
+            }
+            report.push('\n');
+        }
+        // The directory map lists these, but their contents are absent — without
+        // saying so the model reads the gap as an empty file.
+        if !result.summary.skipped_files.is_empty() {
+            report.push_str("Listed in the directory map but not included:\n");
+            for skipped in &result.summary.skipped_files {
+                report.push_str(&format!("  {}: {}\n", skipped.path, skipped.reason));
+            }
+            report.push('\n');
+        }
+    }
+
+    report.push_str(&if redact {
+        redact_secrets(&chunk.content)
+    } else {
+        chunk.content.clone()
+    });
+
+    if !chunk.is_final {
+        report.push_str(&format!(
+            "\n\n(Part {} of {}. Call get_context again with part={} for the rest.)",
+            part,
+            result.summary.total_parts,
+            part + 1
+        ));
+    }
+
+    (report, false)
 }
 
 fn apply_patch(root: &Path, arguments: &Value) -> (String, bool) {
@@ -162,7 +360,10 @@ fn apply_patch(root: &Path, arguments: &Value) -> (String, bool) {
         );
     }
 
-    let dry_run = arguments.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let dry_run = arguments
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let mut report = String::new();
     let markers = count_search_markers(text);
@@ -176,7 +377,9 @@ fn apply_patch(root: &Path, arguments: &Value) -> (String, bool) {
 
     match apply_blocks_transactional(root, &blocks, dry_run) {
         Ok(results) => {
-            let write_failed = results.iter().any(|r| matches!(r, ApplyResult::IoError(..)));
+            let write_failed = results
+                .iter()
+                .any(|r| matches!(r, ApplyResult::IoError(..)));
             for result in &results {
                 report.push_str(&describe(result));
                 report.push('\n');
@@ -207,9 +410,10 @@ fn undo(root: &Path, arguments: &Value) -> (String, bool) {
         .unwrap_or("latest");
 
     match PatchSessionRecord::revert_session(root, session_id) {
-        Ok(restored) if restored.is_empty() => {
-            ("Session reverted; no files needed restoring.".to_string(), false)
-        }
+        Ok(restored) if restored.is_empty() => (
+            "Session reverted; no files needed restoring.".to_string(),
+            false,
+        ),
         Ok(restored) => (restored.join("\n"), false),
         Err(e) => (e, true),
     }
@@ -234,14 +438,14 @@ fn describe(result: &ApplyResult) -> String {
 
 /// One MCP client's configuration file. Clients differ only in where the file
 /// lives and what the server map is called, so the same entry works everywhere.
-struct ClientTarget {
-    id: &'static str,
-    label: &'static str,
-    format: Format,
-    path: Option<PathBuf>,
+pub(crate) struct ClientTarget {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) format: Format,
+    pub(crate) path: Option<PathBuf>,
 }
 
-enum Format {
+pub(crate) enum Format {
     /// Editable in place. The payload is the name of the server map.
     Json(&'static str),
     /// Codex-style TOML. These files carry comments and hand-tuned formatting that a
@@ -249,7 +453,7 @@ enum Format {
     TomlSnippet,
 }
 
-fn known_clients(workspace: &Path) -> Vec<ClientTarget> {
+pub(crate) fn known_clients(workspace: &Path) -> Vec<ClientTarget> {
     let home = dirs::home_dir();
     let in_home = |parts: &[&str]| {
         home.as_ref()
@@ -323,7 +527,10 @@ fn client_listing(workspace: &Path) -> String {
             Format::Json(_) => "",
             Format::TomlSnippet => "  (prints a snippet to paste)",
         };
-        out.push_str(&format!("  {:<16} {}  {}{}\n", client.id, state, location, note));
+        out.push_str(&format!(
+            "  {:<16} {}  {}{}\n",
+            client.id, state, location, note
+        ));
     }
     out.push_str("\nInstall with:  centaur mcp install --client <id>\n");
     out.push_str("Any other client:  centaur mcp install --config <path to its config file>\n");
@@ -338,10 +545,32 @@ pub fn install(
     workspace: &Path,
     name: &str,
 ) -> Result<String, String> {
-    let workspace = std::path::absolute(workspace)
-        .map_err(|e| format!("Could not resolve workspace '{}': {}", workspace.display(), e))?;
+    let workspace = std::path::absolute(workspace).map_err(|e| {
+        format!(
+            "Could not resolve workspace '{}': {}",
+            workspace.display(),
+            e
+        )
+    })?;
     if !workspace.is_dir() {
-        return Err(format!("Workspace is not a directory: {}", workspace.display()));
+        return Err(format!(
+            "Workspace is not a directory: {}",
+            workspace.display()
+        ));
+    }
+
+    if client == Some("all") {
+        let targets = known_clients(&workspace);
+        let mut reports = Vec::new();
+        for target in targets {
+            if let Ok(rep) = install(Some(target.id), None, &workspace, name) {
+                reports.push(format!("[{}]\n{}", target.id, rep));
+            }
+        }
+        return Ok(format!(
+            "Installed Centaur MCP configuration for all clients:\n\n{}",
+            reports.join("\n\n")
+        ));
     }
 
     let executable = std::env::current_exe()
@@ -352,14 +581,19 @@ pub fn install(
             let target = known_clients(&workspace)
                 .into_iter()
                 .find(|c| c.id == id)
-                .ok_or_else(|| format!("Unknown client '{}'.\n\n{}", id, client_listing(&workspace)))?;
+                .ok_or_else(|| {
+                    format!("Unknown client '{}'.\n\n{}", id, client_listing(&workspace))
+                })?;
             let path = target.path.ok_or_else(|| {
-                format!("Could not resolve the configuration path for {}.", target.label)
+                format!(
+                    "Could not resolve the configuration path for {}.",
+                    target.label
+                )
             })?;
             match target.format {
                 Format::Json(key) => (path, key),
                 Format::TomlSnippet => {
-                    return Ok(toml_snippet(&path, name, &executable, &workspace))
+                    return Ok(toml_snippet(&path, name, &executable, &workspace));
                 }
             }
         }
@@ -387,10 +621,16 @@ pub fn install(
     };
 
     if !root.is_object() {
-        return Err(format!("{} does not contain a JSON object.", path.display()));
+        return Err(format!(
+            "{} does not contain a JSON object.",
+            path.display()
+        ));
     }
 
-    let replaced = root.get(key).and_then(|servers| servers.get(name)).is_some();
+    let replaced = root
+        .get(key)
+        .and_then(|servers| servers.get(name))
+        .is_some();
 
     let servers = root
         .get(key)
@@ -470,9 +710,39 @@ mod tests {
         let (report, is_error) = call_tool(dir.path(), "apply_patch", &json!({ "text": text }));
 
         assert!(is_error, "traversal must fail the call: {}", report);
-        assert!(report.contains("traversal"), "report should name the cause: {}", report);
+        assert!(
+            report.contains("traversal"),
+            "report should name the cause: {}",
+            report
+        );
         // The transaction aborts as a whole, so the legal block must not land either.
         assert_eq!(std::fs::read_to_string(&inside).unwrap(), "original");
+    }
+
+    #[test]
+    fn get_context_returns_file_contents_and_refuses_to_leave_the_workspace() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hello.rs"),
+            "fn main() { println!(\"hi\"); }",
+        )
+        .unwrap();
+
+        let (report, is_error) = call_tool(dir.path(), "get_context", &json!({ "mode": "full" }));
+        assert!(!is_error, "{}", report);
+        assert!(
+            report.contains("hello.rs"),
+            "directory map missing: {}",
+            report
+        );
+        assert!(report.contains("println!"), "file body missing: {}", report);
+
+        let (report, is_error) = call_tool(
+            dir.path(),
+            "get_context",
+            &json!({ "paths": ["../elsewhere"] }),
+        );
+        assert!(is_error, "traversal must be refused: {}", report);
     }
 
     #[test]

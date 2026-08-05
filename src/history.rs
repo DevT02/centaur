@@ -74,7 +74,8 @@ impl PatchSessionRecord {
                     let p = entry.path();
                     if p.is_file() && p.extension().map(|e| e == "json").unwrap_or(false) {
                         if let Ok(content) = fs::read_to_string(&p) {
-                            if let Ok(record) = serde_json_from_str::<PatchSessionRecord>(&content) {
+                            if let Ok(record) = serde_json_from_str::<PatchSessionRecord>(&content)
+                            {
                                 sessions.push(record);
                             }
                         }
@@ -168,7 +169,8 @@ mod tests {
             is_new_file: false,
         };
 
-        let session_id = PatchSessionRecord::record_patch_session(dir.path(), vec![backup]).unwrap();
+        let session_id =
+            PatchSessionRecord::record_patch_session(dir.path(), vec![backup]).unwrap();
 
         // Mutate target
         fs::write(&target, "Corrupted AI Content").unwrap();

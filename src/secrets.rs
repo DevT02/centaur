@@ -13,7 +13,8 @@ static GITHUB_RE: LazyLock<Regex> =
 static API_KEY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bsk-(?:proj-)?[a-zA-Z0-9]{20,}\b").unwrap());
 static PRIVATE_KEY_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)-----BEGIN [A-Z ]+ PRIVATE KEY-----.*?-----END [A-Z ]+ PRIVATE KEY-----").unwrap()
+    Regex::new(r"(?s)-----BEGIN [A-Z ]+ PRIVATE KEY-----.*?-----END [A-Z ]+ PRIVATE KEY-----")
+        .unwrap()
 });
 /// Header only: catches truncated keys that have no matching END line.
 static PRIVATE_KEY_HEADER_RE: LazyLock<Regex> =
@@ -30,7 +31,10 @@ pub fn scan_file_for_secrets(path: &Path, content: &str) -> Vec<SecretWarning> {
     let file_path_str = path.to_string_lossy().to_string();
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-    if file_name == ".env" || file_name.ends_with(".env.local") || file_name.ends_with(".env.production") {
+    if file_name == ".env"
+        || file_name.ends_with(".env.local")
+        || file_name.ends_with(".env.production")
+    {
         warnings.push(SecretWarning {
             file_path: file_path_str.clone(),
             pattern_name: "Environment Secrets File (.env)".to_string(),
@@ -48,7 +52,10 @@ pub fn scan_file_for_secrets(path: &Path, content: &str) -> Vec<SecretWarning> {
 
     // AWS's own documentation examples all end in EXAMPLE. Flagging them trains
     // users to ignore the warning, and fails the audit on any repo that quotes the docs.
-    if AWS_RE.find_iter(content).any(|m| !m.as_str().ends_with("EXAMPLE")) {
+    if AWS_RE
+        .find_iter(content)
+        .any(|m| !m.as_str().ends_with("EXAMPLE"))
+    {
         warnings.push(SecretWarning {
             file_path: file_path_str.clone(),
             pattern_name: "AWS Access Key ID".to_string(),
@@ -82,11 +89,21 @@ pub fn scan_file_for_secrets(path: &Path, content: &str) -> Vec<SecretWarning> {
 pub fn redact_secrets(content: &str) -> String {
     let mut redacted = content.to_string();
 
-    redacted = AWS_RE.replace_all(&redacted, "[REDACTED_AWS_KEY_BY_CENTAUR]").to_string();
-    redacted = GCP_RE.replace_all(&redacted, "[REDACTED_GCP_KEY_BY_CENTAUR]").to_string();
-    redacted = GITHUB_RE.replace_all(&redacted, "[REDACTED_GITHUB_TOKEN_BY_CENTAUR]").to_string();
-    redacted = API_KEY_RE.replace_all(&redacted, "[REDACTED_API_KEY_BY_CENTAUR]").to_string();
-    redacted = PRIVATE_KEY_RE.replace_all(&redacted, "[REDACTED_PRIVATE_KEY_BY_CENTAUR]").to_string();
+    redacted = AWS_RE
+        .replace_all(&redacted, "[REDACTED_AWS_KEY_BY_CENTAUR]")
+        .to_string();
+    redacted = GCP_RE
+        .replace_all(&redacted, "[REDACTED_GCP_KEY_BY_CENTAUR]")
+        .to_string();
+    redacted = GITHUB_RE
+        .replace_all(&redacted, "[REDACTED_GITHUB_TOKEN_BY_CENTAUR]")
+        .to_string();
+    redacted = API_KEY_RE
+        .replace_all(&redacted, "[REDACTED_API_KEY_BY_CENTAUR]")
+        .to_string();
+    redacted = PRIVATE_KEY_RE
+        .replace_all(&redacted, "[REDACTED_PRIVATE_KEY_BY_CENTAUR]")
+        .to_string();
 
     redacted
 }
@@ -140,8 +157,15 @@ mod tests {
     #[test]
     fn test_documented_aws_example_is_not_a_finding() {
         // AWS's published example key; flagging it fails audits on docs and fixtures.
-        let w = scan_file_for_secrets(Path::new("README.md"), &format!("AWS_KEY={}", AWS_DOC_EXAMPLE));
-        assert!(w.is_empty(), "documented placeholder should not warn: {:?}", w);
+        let w = scan_file_for_secrets(
+            Path::new("README.md"),
+            &format!("AWS_KEY={}", AWS_DOC_EXAMPLE),
+        );
+        assert!(
+            w.is_empty(),
+            "documented placeholder should not warn: {:?}",
+            w
+        );
     }
 
     #[test]

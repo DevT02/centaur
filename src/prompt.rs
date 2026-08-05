@@ -151,31 +151,43 @@ pub fn handle_prompt_show() {
 pub fn handle_prompt_copy() -> Result<(), String> {
     let template = get_prompt_template();
     let mut cb = Clipboard::new().map_err(|e| format!("Clipboard error: {}", e))?;
-    cb.set_text(template).map_err(|e| format!("Clipboard error: {}", e))?;
+    cb.set_text(template)
+        .map_err(|e| format!("Clipboard error: {}", e))?;
     println!("✅ Prompt template copied to clipboard.");
     Ok(())
 }
 
 pub fn handle_prompt_edit(single: bool) -> Result<(), String> {
     let (path, default) = if single {
-        (single_prompt_template_path(), DEFAULT_PROMPT_TEMPLATE_SINGLE)
+        (
+            single_prompt_template_path(),
+            DEFAULT_PROMPT_TEMPLATE_SINGLE,
+        )
     } else {
         (prompt_template_path(), DEFAULT_PROMPT_TEMPLATE)
     };
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
     }
     if !path.exists() {
-        fs::write(&path, default).map_err(|e| format!("Could not write {}: {}", path.display(), e))?;
+        fs::write(&path, default)
+            .map_err(|e| format!("Could not write {}: {}", path.display(), e))?;
     }
 
     println!("Opening prompt template for editing: {}", path.display());
 
     // $VISUAL then $EDITOR on every platform — the help text always promised both.
-    let editor = env::var("VISUAL").or_else(|_| env::var("EDITOR")).unwrap_or_else(|_| {
-        if cfg!(target_os = "windows") { "notepad.exe".to_string() } else { "nano".to_string() }
-    });
+    let editor = env::var("VISUAL")
+        .or_else(|_| env::var("EDITOR"))
+        .unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "notepad.exe".to_string()
+            } else {
+                "nano".to_string()
+            }
+        });
     Command::new(&editor)
         .arg(&path)
         .status()

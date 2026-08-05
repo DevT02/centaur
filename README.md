@@ -37,30 +37,110 @@ To build the current checkout instead:
 git clone https://github.com/DevT02/centaur.git
 cd centaur
 cargo install --path .
+## Workflow Architecture
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#f6f8fa',
+    'primaryTextColor': '#24292e',
+    'primaryBorderColor': '#d0d7de',
+    'lineColor': '#57606a',
+    'fontFamily': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+  }
+}}%%
+flowchart LR
+    subgraph Repo ["📁 my-project/ Repository"]
+        CodeBase["📄 src/main.rs<br/>src/auth.rs"]
+        History["📸 .centaur/ Snapshot Store"]
+    end
+
+    subgraph Browser ["🌐 Web Browser Tab Workflow"]
+        CmdExport["1. 💻 centaur --export --mode changed"] --> ContextFiles["2. 📎 COPY_THIS_PROMPT.txt<br/>centaur_context_part1.txt"]
+        ContextFiles --> AIReply["3. 🤖 Web AI Output<br/><code>File: src/auth.rs<br/>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH<br/>...<br/>=======<br/>...<br/>&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code>"]
+        AIReply --> CmdApply["4. 📋 centaur --clipboard"]
+    end
+
+    subgraph IDEExt ["🧩 VS Code Extension (editors/vscode)"]
+        Shortcut["⚡ Ctrl+Alt+V / Status Bar Button"] --> ExtAction["🔌 centaur.applyClipboard"]
+    end
+
+    subgraph MCPClient ["🖥️ Desktop App / MCP Workflow"]
+        SlashCmd["⚡ /centaur Slash Command"] --> MCPTools["🔌 MCP Tools<br/><code>get_context()<br/>apply_patch()<br/>undo()</code>"]
+    end
+
+    CmdApply -->|Validate & Write| CodeBase
+    ExtAction -->|Validate & Write| CodeBase
+    MCPTools <-->|Direct Read & Write| CodeBase
+    CodeBase -->|Record Session| History
+```
+
+### Example Project & File Context View
+
+Here is how Centaur inspects a project workspace (`my-project/`) and parses patch blocks back into your source code:
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#f6f8fa',
+    'primaryTextColor': '#24292e',
+    'primaryBorderColor': '#d0d7de',
+    'lineColor': '#8c959f',
+    'fontFamily': 'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace'
+  }
+}}%%
+flowchart TD
+    subgraph RepoTree ["📁 my-project/ Directory Structure"]
+        Dir["my-project/<br/>├── src/<br/>│   ├── main.rs (Entrypoint)<br/>│   └── auth.rs (Auth module)<br/>├── Cargo.toml<br/>└── .centaur/ (Session history & snapshots)"]
+    end
+
+    subgraph File1 ["📄 src/main.rs"]
+        Content1["<code>fn main() {<br/>    println!('Starting server...');<br/>    auth::init();<br/>}</code>"]
+    end
+
+    subgraph File2 ["📄 src/auth.rs (Search/Replace Block Example)"]
+        Content2["<code>File: src/auth.rs<br/>&lt;&lt;&lt;&lt;&lt;&lt;&lt; SEARCH<br/>pub fn init() {<br/>    // TODO: implement auth<br/>}<br/>=======<br/>pub fn init() -&gt; Result&lt;()&gt; {<br/>    println!('Auth initialized');<br/>    Ok(())<br/>}<br/>&gt;&gt;&gt;&gt;&gt;&gt;&gt; REPLACE</code>"]
+    end
+
+    RepoTree --> File1
+    RepoTree --> File2
 ```
 
 ## Quick start
 
 From the repository you want the AI to edit:
 
+### Method 1: Web Browser AI (ChatGPT / Claude / Gemini Web)
+
 ```sh
-# 1. Export changed and untracked files, plus your task.
+# 1. Export changed/untracked files plus your task.
 centaur --export --mode changed --task "Add keyboard navigation to the command menu"
 ```
 
-Centaur opens the export folder and copies the workflow prompt. Paste that prompt into your web AI, attach the generated `centaur_context_part*.txt` files, and send the message.
+Centaur opens the export folder and copies the workflow prompt to your clipboard. Paste that prompt into your web AI, attach the generated `centaur_context_part*.txt` files, and send the message.
 
-When the AI replies with search/replace blocks, copy the entire response and run:
+When the AI replies with Search/Replace blocks, copy the response and run:
 
 ```sh
-# 2. Validate, preview, and apply the clipboard response.
+# 2. Validate, preview, and apply the response.
 centaur --clipboard
 
 # 3. Revert the latest applied patch if needed.
 centaur undo
 ```
 
-Running `centaur` with no arguments opens the interactive workspace UI for the same workflow.
+### Method 2: GUI AI Clients & Editors (Antigravity, Claude Desktop, ChatGPT Desktop, Cursor, Windsurf)
+
+Run the **1-step setup command** inside your project directory:
+
+```sh
+# Auto-configures MCP servers and GUI slash commands across all supported AI clients
+centaur install
+```
+
+After restarting your AI client, the `/centaur` slash command and MCP tools (`get_context`, `apply_patch`, `undo`) land automatically in your client's toolbelt.
 
 ## Export modes
 
@@ -87,7 +167,9 @@ centaur --export --mode changed --redact
 
 | Command | Action |
 | --- | --- |
-| `centaur` / `centaur ui` | Open the interactive workspace UI |
+| `centaur install` | **1-Step Setup:** Auto-configure MCP servers & slash commands across all AI clients |
+| `centaur doctor` | Run system diagnostics, workspace health checks & client integration status |
+| `centaur` / `centaur ui` | Open the interactive workspace terminal UI |
 | `centaur --export [paths...]` | Create upload-ready context files and copy the workflow prompt |
 | `centaur --clipboard` | Read, preview, and apply patch blocks from the clipboard |
 | `centaur --file response.txt` | Read patch blocks from a file |
@@ -96,64 +178,73 @@ centaur --export --mode changed --redact
 | `centaur history` | Browse patch history for the current workspace |
 | `centaur audit` | Scan the workspace for likely leaked credentials |
 | `centaur prompt show\|copy\|edit\|reset` | Manage the workflow prompt templates |
-| `centaur config init\|path` | Create the default config or print its location |
+| `centaur config init\|path` | Create default config or print its location |
 | `centaur --llm auto --clipboard` | Let a local Ollama model repair malformed patch blocks as a fallback |
-| `centaur mcp install --client <id>` | Add Centaur to a GUI client's MCP configuration |
-| `centaur mcp serve --workspace <path>` | Serve the apply and undo tools over stdio; clients run this themselves |
+| `centaur mcp install [--client <id>]` | Add Centaur to a GUI client's MCP configuration (`--client all` for all) |
+| `centaur skill install [--client <id>]` | Install `/centaur` slash commands & skills across GUI clients (`--client all` for all) |
 
 Run `centaur --help` for every option and default.
 
-## GUI clients
+## Which workflow is yours
 
-Desktop AI applications can apply Centaur patches through the Model Context Protocol. They all speak the same stdio protocol and differ only in where their configuration file lives, so one command covers all of them.
+Centaur has one job — get a model a repository and get reviewed edits back — and three ways to do it. Pick by what your AI client can already reach.
 
-### 1. Install the binary
+| Your client | Use | Setup |
+| --- | --- | --- |
+| A browser tab (ChatGPT, Claude, Gemini on the web) | **Clipboard Workflow** | `centaur --export`, attach files, paste reply into `centaur --clipboard` |
+| A desktop app or GUI client (Antigravity, Claude Desktop, Cursor, Windsurf) | **1-Step MCP & Slash Command Setup** | `centaur install` |
+| Command-line agents or editors (Claude Code, Gemini CLI, Cursor, VS Code) | **Direct CLI / Skills Setup** | `centaur install` or `centaur skill install --client all` |
+
+## GUI clients & Integrations
+
+Desktop AI applications can read and patch a repository through the Model Context Protocol and slash command skills.
+
+### 1. Install Centaur
 
 ```sh
 cargo install --git https://github.com/DevT02/centaur.git --force
 ```
 
-### 2. Register Centaur with your client
+### 2. Run 1-Step Setup
 
-Run this from the project you want the client to edit:
-
-```sh
-centaur mcp install --client antigravity
-```
-
-Run `centaur mcp install` with no arguments to list every client, its configuration path, and whether that file already exists on this machine.
-
-| Client id | Application |
-| --- | --- |
-| `claude-desktop` | Claude Desktop |
-| `antigravity`, `antigravity-ide` | Antigravity |
-| `cursor` | Cursor |
-| `windsurf` | Windsurf |
-| `gemini-cli` | Gemini CLI |
-| `vscode` | VS Code, written to this project's `.vscode/mcp.json` |
-| `codex` | ChatGPT desktop and Codex CLI; prints a snippet to paste |
-
-For a client that is not listed, name its configuration file directly:
+From any repository directory:
 
 ```sh
-centaur mcp install --config ~/.some-client/mcp.json
+centaur install
 ```
 
-The command writes the absolute path of the installed binary, which matters because desktop applications are not launched from a terminal and do not inherit your shell's `PATH`. Existing entries in the file are preserved.
-
-The workspace defaults to the current directory. Pass `--workspace` to choose a different one, and `--name` to register several projects side by side:
+Or target a specific client / workspace:
 
 ```sh
-centaur mcp install --client cursor --workspace ~/code/api --name centaur-api
+centaur install --client antigravity
+centaur install --client claude --workspace ~/code/api --name centaur-api
 ```
 
-### 3. Restart the client
+### Supported Client Matrix
 
-MCP servers start when the application does, so a running client will not notice the change. After the restart, `apply_patch` and `undo` appear in its tool list.
+| Client id | Client Application | MCP Tools (`get_context`, `apply_patch`, `undo`) | Slash Commands (`/centaur`, `/export`) |
+| --- | --- | --- | --- |
+| `antigravity` | Antigravity | ✅ Auto-configured (`mcp_config.json`) | ✅ Auto-installed (`~/.gemini/config/skills/` & `.agents/skills/`) |
+| `claude` | Claude Desktop & Claude Code | ✅ Auto-configured (`claude_desktop_config.json`) | ✅ Auto-installed (`~/.claude/skills/` & `~/.claude/commands/`) |
+| `chatgpt` | ChatGPT Desktop & Codex CLI | ✅ TOML Snippet & STDIO guide | ✅ Prompts (`~/.codex/prompts/`) & Custom Instructions |
+| `cursor` | Cursor | ✅ Auto-configured (`.cursor/mcp.json`) | ✅ Auto-installed (`.cursor/commands/`) |
+| `windsurf` | Windsurf | ✅ Auto-configured (`mcp_config.json`) | ✅ Auto-installed (`.windsurf/workflows/`) |
+| `vscode` | VS Code | ✅ Auto-configured (`.vscode/mcp.json`) | ✅ Workspace task |
+| `agents` | Cross-client shared skills | N/A | ✅ Auto-installed (`~/.agents/skills/`) |
 
 ### What the model can and cannot do
 
-It can apply Search/Replace blocks and revert them. It cannot choose the workspace: the directory recorded at install time is the only one the server will write to, and paths that try to escape it are refused. Every apply validates all blocks before writing any of them, and records an undo snapshot first. `undo` restores the most recent session unless you name an older one.
+It can read the workspace, apply Search/Replace blocks, and revert them.
+
+`get_context` returns the directory map and file contents, so a client with no filesystem of its own gets the whole loop without any export or attachment step. Modes match `--export`: `full`, `changed`, `staged`, and `compact`. Large projects come back in numbered parts the model pages through, and `paths` narrows a read to part of the tree. Detected credentials are reported so you see what was sent; `redact` masks them, at the cost of Search text that no longer matches those lines.
+
+It cannot choose the workspace: the directory recorded at install time is the only one the server will read or write, and paths that try to escape it are refused. Every apply validates all blocks before writing any of them, and records an undo snapshot first. `undo` restores the most recent session unless you name an older one.
+
+Because the workspace is fixed at install time, a second project needs its own entry and a client restart:
+
+```sh
+centaur mcp install --client antigravity --workspace ~/code/api --name centaur-api
+```
 
 ### Clients this does not reach
 
