@@ -680,48 +680,76 @@ fn main() -> ExitCode {
 
         if outcome.prompt_copied {
             println!("\n✅ Workflow prompt copied to clipboard.");
+        } else {
+            println!(
+                "\n⚠️ Workflow prompt saved to {}.",
+                export_dir
+                    .join(export::PROMPT_FALLBACK_FILENAME)
+                    .display()
+            );
         }
 
         if result.summary.total_batches == 1 {
-            println!("\n--- HOW TO USE ---");
-            println!("1. Open the export folder: {}", export_dir.display());
-            println!(
-                "2. Copy the text in COPY_THIS_PROMPT.txt and paste it into ChatGPT or Claude as your first message."
-            );
-            println!("3. Attach all centaur_context_part*.txt files to the same message.");
-            println!("4. Send the message and wait for the AI to reply with code edits.");
-            println!(
-                "5. Run 'centaur' again — it will detect the AI reply in your clipboard and apply it."
-            );
+            println!("\n--- NEXT: SEND TO THE AI ---");
+            if outcome.prompt_copied {
+                println!("1. Paste the copied prompt into ChatGPT or Claude.");
+            } else {
+                println!(
+                    "1. Open {} and copy its text into ChatGPT or Claude.",
+                    export::PROMPT_FALLBACK_FILENAME
+                );
+            }
+            println!("2. Attach all centaur_context_part*.txt files to the same message.");
+            println!("3. Send the message.");
+
+            println!("\n--- WHEN THE AI REPLIES ---");
+            println!("4. Copy the complete AI response, including every Search/Replace block.");
+            println!("5. Run 'centaur' again, then review and approve the proposed changes.");
 
             if config.export.open_export_directory {
                 the_clipboard_centaur::ui::open_directory(export_dir);
             }
         } else {
             println!(
-                "\n--- HOW TO USE ({} upload messages required) ---",
+                "\n--- NEXT: SEND TO THE AI ({} upload messages) ---",
                 result.summary.total_batches
             );
-            println!(
-                "1. Copy COPY_THIS_PROMPT.txt and paste it into ChatGPT/Claude as your first message."
-            );
+            if outcome.prompt_copied {
+                println!("1. Paste the copied prompt into ChatGPT or Claude.");
+            } else {
+                println!(
+                    "1. Open {} and copy its text into ChatGPT or Claude.",
+                    export::PROMPT_FALLBACK_FILENAME
+                );
+            }
             println!("2. Attach files from batch_01/ to the same message and send.");
             for b in 2..=result.summary.total_batches {
                 if b == result.summary.total_batches {
                     println!(
-                        "{}. Attach files from batch_{:02}/ — this is the FINAL batch. The AI will begin once received.",
+                        "{}. Attach files from batch_{:02}/ — this is the final batch.",
                         b + 1,
                         b
                     );
                 } else {
                     println!(
-                        "{}. After the AI acknowledges batch {}, attach files from batch_{:02}/ and send.",
+                        "{}. After the AI acknowledges batch {}, attach files from batch_{:02}/.",
                         b + 1,
                         b - 1,
                         b
                     );
                 }
             }
+
+            println!("\n--- WHEN THE AI REPLIES ---");
+            println!(
+                "{}. Copy the complete AI response, including every Search/Replace block.",
+                result.summary.total_batches + 2
+            );
+            println!(
+                "{}. Run 'centaur' again, then review and approve the proposed changes.",
+                result.summary.total_batches + 3
+            );
+
             if config.export.open_export_directory {
                 the_clipboard_centaur::ui::open_directory(export_dir);
             }
