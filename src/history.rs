@@ -25,10 +25,16 @@ pub struct PatchSessionRecord {
 
 /// Canonical, comparable form of a workspace path.
 fn workspace_key(dir: &Path) -> String {
-    dir.canonicalize()
+    let raw = dir
+        .canonicalize()
         .unwrap_or_else(|_| dir.to_path_buf())
         .to_string_lossy()
-        .to_string()
+        .to_string();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        raw
+    }
 }
 
 impl PatchSessionRecord {

@@ -12,6 +12,9 @@ use arboard::Clipboard;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Written only when the workflow prompt could not be placed on the clipboard.
+pub const PROMPT_FALLBACK_FILENAME: &str = "COPY_THIS_PROMPT.txt";
+
 /// Files Centaur itself generates. Feeding them back into an export compounds
 /// context on every run.
 fn is_centaur_artifact(path: &Path) -> bool {
@@ -21,8 +24,9 @@ fn is_centaur_artifact(path: &Path) -> bool {
         .to_string_lossy()
         .to_string();
     name.starts_with("centaur_context_part")
-        || name == "COPY_THIS_PROMPT.txt"
+        || name == PROMPT_FALLBACK_FILENAME
         || name == "manifest.json"
+        || name == ".metadata"
         || path.to_string_lossy().contains("centaur_export")
 }
 
@@ -150,6 +154,34 @@ fn redact_env_values(content: &str) -> String {
     out
 }
 
+/// Purges centaur_export_* folders in temp_dir that are older than max_age_secs (default 24h).
+pub fn cleanup_stale_exports(max_age_secs: u64) -> usize {
+    let temp = std::env::temp_dir();
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(&temp) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("centaur_export_") {
+                        if let Ok(metadata) = entry.metadata() {
+                            if let Ok(modified) = metadata.modified() {
+                                if let Ok(elapsed) = modified.elapsed() {
+                                    if elapsed.as_secs() > max_age_secs {
+                                        let _ = std::fs::remove_dir_all(&path);
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
 pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, String> {
     // Redaction packs from a throwaway copy so the real workspace is never touched.
     let redact_dir = req
@@ -183,6 +215,9 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
         result.summary.total_batches,
     );
 
+    // Auto-clean any temporary export directories older than 24 hours
+    cleanup_stale_exports(86400);
+
     // Named by session id: unique per run, so no guessable path to clobber and no
     // need to recursively delete whatever already sits there.
     let export_dir = std::env::temp_dir().join(format!("centaur_export_{}", req.pack.session_id));
@@ -196,16 +231,6 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
     }
 
     let mut write_errors = Vec::new();
-    write(
-        &mut write_errors,
-        export_dir.join("COPY_THIS_PROMPT.txt"),
-        &prompt,
-    );
-    write(
-        &mut write_errors,
-        export_dir.join("manifest.json"),
-        &result.manifest_json,
-    );
 
     let single_batch = result.summary.total_batches == 1;
     for chunk in &result.chunks {
@@ -230,6 +255,17 @@ pub fn run(req: &ExportRequest, files: Vec<PathBuf>) -> Result<ExportOutcome, St
         && Clipboard::new()
             .and_then(|mut cb| cb.set_text(prompt.clone()))
             .is_ok();
+
+    // Keep the normal export folder limited to upload files. A prompt file appears
+    // only when clipboard delivery was disabled or failed, so the user is never
+    // stranded without the workflow instructions.
+    if !prompt_copied {
+        write(
+            &mut write_errors,
+            export_dir.join(PROMPT_FALLBACK_FILENAME),
+            &prompt,
+        );
+    }
 
     Ok(ExportOutcome {
         result,
@@ -334,5 +370,32 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["main.rs".to_string()], "got {:?}", names);
+    }
+
+    #[test]
+    fn prompt_file_is_written_when_clipboard_copy_is_disabled() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+
+        let files = collect_files(dir.path(), ExportMode::Full, &[]);
+        let req = ExportRequest {
+            root: dir.path().to_path_buf(),
+            task: "Improve the export experience".to_string(),
+            redact: false,
+            copy_prompt: false,
+            pack: opts(dir.path()),
+        };
+
+        let out = run(&req, files).unwrap();
+        let fallback = out.export_dir.join(PROMPT_FALLBACK_FILENAME);
+
+        assert!(!out.prompt_copied);
+        assert!(out.write_errors.is_empty());
+        assert_eq!(fs::read_to_string(fallback).unwrap(), out.prompt);
+    }
+
+    #[test]
+    fn test_cleanup_stale_exports_runs_without_panicking() {
+        let _ = cleanup_stale_exports(86400);
     }
 }

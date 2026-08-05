@@ -36,55 +36,83 @@ To build the current checkout instead:
 git clone https://github.com/DevT02/centaur.git
 cd centaur
 cargo install --path .
-## Workflow Architecture
-
-```mermaid
-flowchart LR
-    subgraph Repo ["📁 my-project/ Repository"]
-        CodeBase["📄 src/main.rs and src/auth.rs"]
-        History["📸 .centaur/ Snapshot Store"]
-    end
-
-    subgraph Browser ["🌐 Web Browser AI Workflow"]
-        CmdExport["💻 1. centaur --export --mode changed"] --> ContextFiles["📎 2. Attach context & prompt"]
-        ContextFiles --> AIReply["🤖 3. AI outputs Search/Replace block"]
-        AIReply --> CmdApply["📋 4. centaur --clipboard"]
-    end
-
-    subgraph IDEExt ["🧩 VS Code Extension"]
-        Shortcut["⚡ Ctrl+Alt+V or Status Bar"] --> ExtAction["🔌 centaur.applyClipboard"]
-    end
-
-    subgraph MCPClient ["🖥️ Desktop App / MCP Workflow"]
-        SlashCmd["⚡ /centaur Slash Command"] --> MCPTools["🔌 MCP Tools: get_context, apply_patch, undo"]
-    end
-
-    CmdApply -->|Validate & Write| CodeBase
-    ExtAction -->|Validate & Write| CodeBase
-    MCPTools <-->|Direct Read & Write| CodeBase
-    CodeBase -->|Record Session| History
 ```
 
-### Example Project & File Context View
+## Workflow Architecture
+
+| Workflow | How Context Reaches the AI | How Edits Return to Codebase |
+| --- | --- | --- |
+| **Web Browser AI** *(ChatGPT, Claude, Gemini Web)* | `centaur --export` creates context files & copies prompt | Copy response & run `centaur --clipboard` |
+| **VS Code Extension** | Reads active workspace | Press `Ctrl+Alt+V` or click Status Bar `⚡ Centaur` |
+| **Desktop AI App / MCP** *(Antigravity, Claude, Cursor, Windsurf)* | Native MCP tool (`get_context`) | Native MCP tool (`apply_patch` / `undo`) |
+
+## Interface & GUI Screenshots
+
+### 1. Interactive Terminal Export Workflow (`centaur`)
+
+Real execution of Centaur's interactive CLI workspace hub, prompt entry, context token packing, and next steps output:
+
+<p align="center">
+  <img src="docs/screenshots/tui_export_workflow.png" alt="Centaur Interactive Terminal Export Workflow" width="760" />
+</p>
+
+
+### 2. Desktop GUI Slash Commands (`/centaur`)
+
+Centaur automatically installs `/centaur` slash commands across AI desktop clients (Antigravity, Claude, ChatGPT, Cursor, Windsurf):
+
+<p align="center">
+  <img src="docs/screenshots/gui_slash_commands.png" alt="Centaur GUI Slash Command Menu" width="760" />
+</p>
+
+### 3. End-to-End Workflow in ChatGPT
+
+**Step 1 — Paste prompt & upload file.** Centaur copies the prompt automatically. Press Ctrl+V, drag in `centaur_context_part001.txt`, and send:
+
+<p align="center">
+  <img src="docs/screenshots/chatgpt_step1_message_sent.png" alt="Centaur prompt pasted and file attached in ChatGPT" width="620" />
+</p>
+
+**Step 2 — AI reads your codebase and returns Search/Replace blocks.** ChatGPT inspects every file in the export and proposes targeted edits:
+
+<p align="center">
+  <img src="docs/screenshots/chatgpt_step2_ai_thinking.png" alt="ChatGPT reading Centaur export and generating patches" width="620" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/chatgpt_step4_copy_button.png" alt="ChatGPT response with Copy response button highlighted" width="620" />
+</p>
+
+**Step 3 — Copy the complete response, run `centaur`, review and approve.**
+
+
+### Example Project & Patch Execution
 
 Here is how Centaur inspects a project workspace (`my-project/`) and parses patch blocks back into your source code:
 
-```mermaid
-flowchart TD
-    subgraph RepoTree ["📁 my-project/ Directory Structure"]
-        Dir["my-project/\n├── src/\n│   ├── main.rs\n│   └── auth.rs\n├── Cargo.toml\n└── .centaur/"]
-    end
+#### 1. Repository Directory Structure
+```text
+my-project/
+├── src/
+│   ├── main.rs       # Application entry point
+│   └── auth.rs       # Authentication module
+├── Cargo.toml        # Build configuration
+└── .centaur/         # Isolated workspace undo snapshots
+```
 
-    subgraph File1 ["📄 src/main.rs"]
-        Content1["fn main() {\n    auth::init();\n}"]
-    end
-
-    subgraph File2 ["📄 src/auth.rs"]
-        Content2["Patch Action:\nSEARCH: pub fn init() {}\nREPLACE: pub fn init() -> Result<()> {}"]
-    end
-
-    RepoTree --> File1
-    RepoTree --> File2
+#### 2. AI Search/Replace Response Format
+```text
+File: src/auth.rs
+<<<<<<< SEARCH
+pub fn init() {
+    // TODO: initialize auth
+}
+=======
+pub fn init() -> Result<()> {
+    println!("Auth initialized");
+    Ok(())
+}
+>>>>>>> REPLACE
 ```
 
 ## Quick start
@@ -190,6 +218,25 @@ From any repository directory:
 
 ```sh
 centaur install
+```
+
+#### Setup Output Example
+```text
+Setting up Centaur for workspace C:\Users\username\code\my-project...
+
+--- MCP Configurations ---
+[claude-desktop] Configured at C:\Users\username\AppData\Roaming\Claude\claude_desktop_config.json
+[antigravity]      Configured at C:\Users\username\.gemini\antigravity\mcp_config.json
+[cursor]           Configured at C:\Users\username\.cursor\mcp.json
+[windsurf]         Configured at C:\Users\username\.codeium\windsurf\mcp_config.json
+[vscode]           Configured at C:\Users\username\code\my-project\.vscode\mcp.json
+
+--- Slash Commands & Skills ---
+[antigravity] Installed C:\Users\username\.gemini\config\skills\centaur\SKILL.md
+[claude]      Installed C:\Users\username\.claude\skills\centaur\SKILL.md
+[chatgpt]     Installed C:\Users\username\.codex\prompts\centaur.md
+
+Centaur setup complete. Restart your AI client(s) to activate.
 ```
 
 Or target a specific client / workspace:

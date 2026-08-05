@@ -25,11 +25,11 @@ pub fn configure_visual_theme() -> RenderConfig<'static> {
             .with_fg(Color::LightYellow)
             .with_attr(Attributes::BOLD),
     );
-    config.highlighted_option_prefix = inquire::ui::Styled::new(" ➜ ")
+    config.highlighted_option_prefix = inquire::ui::Styled::new("➜ ")
         .with_fg(Color::LightYellow)
         .with_attr(Attributes::BOLD);
-    config.scroll_up_prefix = inquire::ui::Styled::new(" ▲ ").with_fg(Color::LightCyan);
-    config.scroll_down_prefix = inquire::ui::Styled::new(" ▼ ").with_fg(Color::LightCyan);
+    config.scroll_up_prefix = inquire::ui::Styled::new("");
+    config.scroll_down_prefix = inquire::ui::Styled::new("");
     config
 }
 
@@ -44,10 +44,10 @@ pub fn render_workspace_dashboard() {
             .bright_cyan()
     );
     println!(
-        "{} {}   {}",
+        "{}  {}   {}",
         "│".bright_cyan(),
         "✦ THE CLIPBOARD CENTAUR ✦".bright_yellow().bold(),
-        "AI Pair-Programming & Patch Engine │".bright_cyan().bold()
+        "AI Pair-Programming & Patch Engine".bright_cyan().bold()
     );
     println!(
         "{}",
@@ -57,12 +57,10 @@ pub fn render_workspace_dashboard() {
 
     // Project Root Line
     println!(
-        "{}  {} {} {}",
+        "{}  📁 {} {}",
         "│".bright_cyan(),
-        "📁 Workspace :".bright_white().bold(),
-        root_path_str.bright_cyan(),
-        " ".repeat(71usize.saturating_sub(17 + root_path_str.len()))
-            + "│".bright_cyan().to_string().as_str()
+        "Workspace  :".bright_white().bold(),
+        root_path_str.bright_cyan()
     );
 
     // Git Branch Line
@@ -79,20 +77,11 @@ pub fn render_workspace_dashboard() {
         } else {
             format!("{} (clean)", branch.bright_cyan())
         };
-        let git_line = format!("🌿 Git Status: {}", git_status);
-        let display_len = 15
-            + branch.len()
-            + if changed_count > 0 {
-                21 + changed_count.to_string().len()
-            } else {
-                8
-            };
         println!(
-            "{}  {} {}",
+            "{}  🌿 {} {}",
             "│".bright_cyan(),
-            git_line,
-            " ".repeat(73usize.saturating_sub(display_len))
-                + "│".bright_cyan().to_string().as_str()
+            "Git Status :".bright_white().bold(),
+            git_status
         );
     }
 
@@ -102,6 +91,7 @@ pub fn render_workspace_dashboard() {
         .and_then(|mut cb| cb.get_text().ok())
         .unwrap_or_default();
     let clip_blocks = parse_blocks(&clip_text);
+    let search_markers = crate::count_search_markers(&clip_text);
 
     if !clip_blocks.is_empty() {
         let targets: Vec<String> = clip_blocks.iter().map(|b| b.file_path.clone()).collect();
@@ -111,21 +101,35 @@ pub fn render_workspace_dashboard() {
             clip_blocks.len(),
             targets_str
         );
-        let display_len = 17 + clip_blocks.len().to_string().len() + targets_str.len();
         println!(
-            "{}  {} {}",
+            "{}  {}",
             "│".bright_cyan(),
-            clip_msg.bright_green().bold(),
-            " ".repeat(73usize.saturating_sub(display_len))
-                + "│".bright_cyan().to_string().as_str()
+            clip_msg.bright_green().bold()
+        );
+    } else if search_markers > 0 {
+        // Has SEARCH markers but failed to parse — malformed delimiters
+        let clip_msg = format!(
+            "📋 Clipboard  : {} patch marker(s) found but could not be parsed — check delimiters",
+            search_markers
+        );
+        println!(
+            "{}  {}",
+            "│".bright_cyan(),
+            clip_msg.bright_yellow().bold()
+        );
+    } else if clip_text.trim().is_empty() {
+        let clip_msg = "📋 Clipboard  : Empty — copy the AI's complete response first";
+        println!(
+            "{}  {}",
+            "│".bright_cyan(),
+            clip_msg.dimmed()
         );
     } else {
-        let clip_msg = "📋 Clipboard  : Clear (No Search/Replace blocks in clipboard)";
+        let clip_msg = "📋 Clipboard  : Text copied, but no patch found — copy the complete AI response";
         println!(
-            "{}  {} {}",
+            "{}  {}",
             "│".bright_cyan(),
-            clip_msg.dimmed(),
-            " ".repeat(73usize.saturating_sub(60)) + "│".bright_cyan().to_string().as_str()
+            clip_msg.dimmed()
         );
     }
 
@@ -273,6 +277,87 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HubAction {
+    Export,
+    Apply,
+    Undo,
+    MoreTools,
+    Exit,
+}
+
+const PRIMARY_MENU_ITEMS: [(HubAction, &str); 5] = [
+    (
+        HubAction::Export,
+        "📦 START AI TASK     — Export code and a ready-to-paste prompt",
+    ),
+    (
+        HubAction::Apply,
+        "⚡ APPLY AI PATCH   — Copy the complete AI response first, then apply",
+    ),
+    (
+        HubAction::Undo,
+        "↺  UNDO LAST PATCH  — Restore the latest workspace snapshot",
+    ),
+    (
+        HubAction::MoreTools,
+        "🧰 MORE TOOLS       — Preview, audit, customize prompts, or update",
+    ),
+    (HubAction::Exit, "🚪 EXIT             — Close Centaur"),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoreToolsAction {
+    Preview,
+    Audit,
+    EditPrompt,
+    Update,
+}
+
+const MORE_TOOLS_MENU_ITEMS: [(MoreToolsAction, &str); 4] = [
+    (
+        MoreToolsAction::Preview,
+        "🔍 PREVIEW PATCH   — Validate clipboard edits without changing files",
+    ),
+    (
+        MoreToolsAction::Audit,
+        "🛡️ SECURITY AUDIT  — Scan the workspace for exposed credentials",
+    ),
+    (
+        MoreToolsAction::EditPrompt,
+        "📝 EDIT PROMPT     — Customize the prompt included with exports",
+    ),
+    (
+        MoreToolsAction::Update,
+        "🚀 UPDATE CENTAUR  — Pull source updates and rebuild the CLI",
+    ),
+];
+
+fn run_more_tools_menu() {
+    let options: Vec<&str> = MORE_TOOLS_MENU_ITEMS
+        .iter()
+        .map(|(_, label)| *label)
+        .collect();
+    let choice = Select::new("Choose a tool:", options)
+        .with_render_config(configure_visual_theme())
+        .with_page_size(MORE_TOOLS_MENU_ITEMS.len())
+        .raw_prompt();
+
+    let Ok(choice) = choice else {
+        println!("{}", "No tool selected.".bright_yellow());
+        return;
+    };
+
+    match MORE_TOOLS_MENU_ITEMS[choice.index].0 {
+        MoreToolsAction::Preview => run_dry_run_interactive(),
+        MoreToolsAction::Audit => {
+            run_security_audit();
+        }
+        MoreToolsAction::EditPrompt => run_prompt_edit_interactive(),
+        MoreToolsAction::Update => run_auto_update_interactive(),
+    }
+}
+
 pub fn run_interactive_hub() {
     render_workspace_dashboard();
     let render_config = configure_visual_theme();
@@ -301,35 +386,34 @@ pub fn run_interactive_hub() {
         }
     }
 
-    // Main Menu Options with clear color visual hierarchy
-    let options = vec![
-        "⚡ [1] REVIEW & APPLY       — Validate and review clipboard edits before writing",
-        "📦 [2] SEND CODEBASE        — Package context & prompt for ChatGPT / Claude",
-        "↺  [3] UNDO LAST CHANGES    — Revert files to pre-patch state",
-        "🔍 [4] PREVIEW PATCH        — Dry-run test diff matching without modifying disk",
-        "🛡️  [5] SECURITY AUDIT       — Scan project for exposed API keys & passwords",
-        "📝 [6] EDIT PROMPT          — Customize upload prompt template",
-        "🚀 [7] UPDATE CENTAUR       — Pull repo & rebuild centaur CLI on PATH",
-        "🚪 [8] EXIT                 — Close Centaur dashboard",
-    ];
+    println!(
+        "{}",
+        "  Workflow: Export → AI → Review → Apply"
+            .dimmed()
+    );
+    println!("{}", "  What do you want to do?".bright_white().bold());
 
-    println!("{}", "  Select Action:".bright_white().bold());
-
+    let options: Vec<&str> = PRIMARY_MENU_ITEMS
+        .iter()
+        .map(|(_, label)| *label)
+        .collect();
     let choice = Select::new("", options)
         .with_render_config(render_config)
-        .prompt();
+        .with_page_size(PRIMARY_MENU_ITEMS.len())
+        .raw_prompt();
 
-    match choice {
-        Ok(sel) if sel.contains("[1]") => run_apply_interactive(),
-        Ok(sel) if sel.contains("[2]") => run_export_wizard(),
-        Ok(sel) if sel.contains("[3]") => run_history_interactive(),
-        Ok(sel) if sel.contains("[4]") => run_dry_run_interactive(),
-        Ok(sel) if sel.contains("[5]") => {
-            run_security_audit();
-        }
-        Ok(sel) if sel.contains("[6]") => run_prompt_edit_interactive(),
-        Ok(sel) if sel.contains("[7]") => run_auto_update_interactive(),
-        _ => println!("{}", "\n👋 Goodbye from Centaur!".bright_cyan().bold()),
+    let action = choice
+        .ok()
+        .and_then(|choice| PRIMARY_MENU_ITEMS.get(choice.index))
+        .map(|(action, _)| *action)
+        .unwrap_or(HubAction::Exit);
+
+    match action {
+        HubAction::Export => run_export_wizard(),
+        HubAction::Apply => run_apply_interactive(),
+        HubAction::Undo => run_history_interactive(),
+        HubAction::MoreTools => run_more_tools_menu(),
+        HubAction::Exit => println!("{}", "\n👋 Goodbye from Centaur!".bright_cyan().bold()),
     }
 }
 
@@ -429,6 +513,76 @@ pub fn run_apply_interactive() {
     let _ = review_and_apply_blocks(&blocks);
 }
 
+const EXPORT_TASK_GUIDANCE: &str =
+    "Describe the desired outcome, important constraints, and how success should be verified. Leave blank for a conservative correctness and security review.";
+const EXPORT_TASK_LABEL: &str = "What should the AI change or review?";
+const EXPORT_TASK_HELP: &str =
+    "Example: Simplify the export instructions, preserve existing CLI behavior, and add a focused regression test.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportScopeChoice {
+    Changed,
+    Full,
+    Staged,
+    Compact,
+}
+
+impl ExportScopeChoice {
+    fn mode(self) -> ExportMode {
+        match self {
+            Self::Changed => ExportMode::Changed,
+            Self::Full => ExportMode::Full,
+            Self::Staged => ExportMode::Staged,
+            Self::Compact => ExportMode::Compact,
+        }
+    }
+}
+
+const GIT_EXPORT_SCOPES: [(ExportScopeChoice, &str); 4] = [
+    (
+        ExportScopeChoice::Changed,
+        "🌿 Changed Files Only (Recommended — modified and untracked Git files)",
+    ),
+    (
+        ExportScopeChoice::Full,
+        "📂 Entire Project (All eligible files in this workspace)",
+    ),
+    (
+        ExportScopeChoice::Staged,
+        "📌 Staged Files Only (Git staged files only)",
+    ),
+    (
+        ExportScopeChoice::Compact,
+        "⚡ Compact Project (Entire project without repetitive fixtures and data)",
+    ),
+];
+
+const NON_GIT_EXPORT_SCOPES: [(ExportScopeChoice, &str); 2] = [
+    (
+        ExportScopeChoice::Full,
+        "📂 Entire Project (Recommended — all eligible files in this folder)",
+    ),
+    (
+        ExportScopeChoice::Compact,
+        "⚡ Compact Project (Omit repetitive fixtures and data)",
+    ),
+];
+
+fn export_scope_options(is_git: bool) -> &'static [(ExportScopeChoice, &'static str)] {
+    if is_git {
+        &GIT_EXPORT_SCOPES
+    } else {
+        &NON_GIT_EXPORT_SCOPES
+    }
+}
+
+fn cancel_export() {
+    println!(
+        "{}",
+        "Export cancelled. No files were created.".bright_yellow()
+    );
+}
+
 pub fn run_export_wizard() {
     let render_config = configure_visual_theme();
     println!(
@@ -450,38 +604,30 @@ pub fn run_export_wizard() {
         .to_string_lossy()
         .to_string();
 
-    let scopes = vec![
-        "🌿 Changed Files Only  (Recommended — modified & untracked git files)",
-        "📂 Entire Project      (All tracked source files in repository)",
-        "📌 Staged Files Only   (Git staged files only)",
-        "⚡ Compact Mode        (Full export omitting test fixtures & data)",
-    ];
+    let scopes = export_scope_options(is_git_repo(&root_dir));
+    let scope_labels: Vec<&str> = scopes.iter().map(|(_, label)| *label).collect();
+    let scope_choice =
+        Select::new("Which files should be included in the export?", scope_labels)
+            .with_render_config(render_config)
+            .with_page_size(scopes.len())
+            .raw_prompt();
 
-    let scope_choice = Select::new("Which files should be included in export?", scopes.clone())
-        .with_render_config(render_config)
-        .prompt()
-        .unwrap_or(scopes[0]);
-
-    let mode = if scope_choice.contains("Changed") {
-        ExportMode::Changed
-    } else if scope_choice.contains("Staged") {
-        ExportMode::Staged
-    } else if scope_choice.contains("Compact") {
-        ExportMode::Compact
-    } else {
-        ExportMode::Full
+    let Ok(scope_choice) = scope_choice else {
+        cancel_export();
+        return;
     };
+    let mode = scopes[scope_choice.index].0.mode();
 
-    println!(
-        "{}",
-        "Describe the desired outcome, important constraints, and how success should be verified. Leave blank for a conservative correctness/security review."
-            .dimmed()
-    );
-    let task_prompt = Text::new("What should the AI change or review?")
-        .with_help_message("Example: Fix duplicate exports, preserve existing CLI flags, and add a regression test.")
+    println!("{}", EXPORT_TASK_GUIDANCE.dimmed());
+    let task_prompt = Text::new(EXPORT_TASK_LABEL)
+        .with_help_message(EXPORT_TASK_HELP)
         .with_render_config(render_config)
-        .prompt()
-        .unwrap_or_default();
+        .prompt();
+
+    let Ok(task_prompt) = task_prompt else {
+        cancel_export();
+        return;
+    };
 
     let files_to_pack = export::collect_files(&root_dir, mode, &[]);
 
@@ -511,11 +657,15 @@ pub fn run_export_wizard() {
         ];
         let sec_choice = Select::new("How should secrets be handled?", sec_opts.clone())
             .with_render_config(render_config)
-            .prompt()
-            .unwrap_or(sec_opts[0]);
+            .prompt();
+
+        let Ok(sec_choice) = sec_choice else {
+            cancel_export();
+            return;
+        };
 
         if sec_choice.contains("Cancel") {
-            println!("{}", "Export cancelled.".bright_yellow());
+            cancel_export();
             return;
         }
         if sec_choice.contains("redact") {
@@ -555,29 +705,44 @@ pub fn run_export_wizard() {
             return;
         }
     };
-    let (result, export_dir, prompt_copied) =
+    let (result, export_dir, _prompt_copied) =
         (&outcome.result, &outcome.export_dir, outcome.prompt_copied);
 
-    println!("\n{}", "📊 --- EXPORT SUMMARY ---".bright_cyan().bold());
+    println!("\n{}", "✨ Export complete!".bright_green().bold());
+
+    let files_label = if result.summary.total_files == 1 {
+        "1 project file".to_string()
+    } else {
+        format!("{} project files", result.summary.total_files)
+    };
+    let upload_file_label = if result.summary.total_parts == 1 {
+        "1 upload file".to_string()
+    } else {
+        format!("{} upload files", result.summary.total_parts)
+    };
     println!(
-        "   Files exported      : {}",
-        result.summary.total_files.to_string().bright_yellow()
+        "   {}",
+        format!("✓ {} packed into {}", files_label, upload_file_label).bright_green()
     );
+    if outcome.prompt_copied {
+        println!("   {}", "✓ Prompt copied to clipboard".bright_green());
+    } else {
+        println!(
+            "   {}",
+            format!(
+                "! Prompt not copied — use {}",
+                export::PROMPT_FALLBACK_FILENAME
+            )
+            .bright_yellow()
+        );
+    }
     println!(
-        "   Total characters    : {}",
-        result.summary.total_chars.to_string().bright_yellow()
-    );
-    println!(
-        "   Estimated AI tokens : {}",
-        format!("~{}", result.summary.estimated_tokens).bright_yellow()
-    );
-    println!(
-        "   Attachments created : {}",
-        result.summary.total_parts.to_string().bright_yellow()
-    );
-    println!(
-        "   Upload messages     : {}",
-        result.summary.total_batches.to_string().bright_yellow()
+        "   {}",
+        format!(
+            "{} characters · ~{} tokens",
+            result.summary.total_chars, result.summary.estimated_tokens
+        )
+        .dimmed()
     );
 
     if let Some(warn) = &result.summary.token_warning {
@@ -596,42 +761,38 @@ pub fn run_export_wizard() {
         }
     }
 
-    if result.summary.total_batches == 1 {
-        println!("\n{}", "✨ Export complete!".bright_green().bold());
-        println!("\n{}", "📋 --- NEXT STEPS ---".bright_cyan().bold());
-        println!(
-            "   1. Export Folder : {}",
-            export_dir.display().to_string().bright_yellow()
-        );
-        if prompt_copied {
-            println!("   2. Prompt        : Already copied — paste it into ChatGPT / Claude");
-        } else {
-            println!("   2. Prompt        : Copy COPY_THIS_PROMPT.txt into ChatGPT / Claude");
-        }
-        println!("   3. Attachments   : Upload all centaur_context_part*.txt files");
-        println!(
-            "   4. Apply Edits   : Copy the AI reply, run 'centaur', review the plan, and approve"
-        );
+    println!("\n{}", "📋 --- NEXT: SEND TO THE AI ---".bright_cyan().bold());
+    if outcome.prompt_copied {
+        println!("   1. Paste the prompt");
+        println!("      Press Ctrl+V in ChatGPT or Claude.");
     } else {
+        println!("   1. Copy the saved prompt");
         println!(
-            "\n{}",
-            format!(
-                "✨ Export complete! {} upload messages required.",
-                result.summary.total_batches
-            )
-            .bright_green()
-            .bold()
+            "      Open {} and copy all its text.",
+            export::PROMPT_FALLBACK_FILENAME
         );
-        println!(
-            "   Export Folder : {}",
-            export_dir.display().to_string().bright_yellow()
-        );
-        if prompt_copied {
-            println!("   1. Paste the prompt already copied to your clipboard");
+    }
+
+    if result.summary.total_batches == 1 {
+        if result.summary.total_parts == 1 {
+            println!("   2. Upload the selected file");
+            println!("      Drag centaur_context_part001.txt into the same message.");
         } else {
-            println!("   1. Paste COPY_THIS_PROMPT.txt into ChatGPT / Claude");
+            println!("   2. Upload the selected files");
+            println!(
+                "      Drag all {} centaur_context_part*.txt files into the same message.",
+                result.summary.total_parts
+            );
         }
-        println!("   2. Upload batch_01/ files and send message");
+        println!("   3. Send your message");
+
+        println!("\n{}", "--- WHEN THE AI REPLIES ---".bright_cyan().bold());
+        println!("   4. Copy the complete AI response");
+        println!("      Include all Search/Replace code blocks in your copy.");
+        println!("   5. Run centaur again");
+        println!("      Review the proposed changes, then approve them.");
+    } else {
+        println!("   2. Upload batch_01/ files into the same message");
         for b in 2..=result.summary.total_batches {
             println!(
                 "   {}. Upload batch_{:02}/ files after AI acknowledges batch {}",
@@ -640,14 +801,57 @@ pub fn run_export_wizard() {
                 b - 1
             );
         }
+        println!("\n{}", "--- WHEN THE AI REPLIES ---".bright_cyan().bold());
+        println!("   {}. Copy the complete AI response", result.summary.total_batches + 2);
+        println!("      Include all Search/Replace code blocks in your copy.");
+        println!("   {}. Run centaur again", result.summary.total_batches + 3);
+        println!("      Review the proposed changes, then approve them.");
     }
 
     if config.export.open_export_directory {
+        println!(
+            "\n{}",
+            "✓ Explorer opened with the upload file selected".bright_green()
+        );
         open_directory(export_dir);
+    } else {
+        println!(
+            "\n   Export folder: {}",
+            export_dir.display().to_string().bright_yellow()
+        );
     }
 }
 
 pub fn open_directory(dir: &std::path::Path) {
+    let primary_target = dir.join("centaur_context_part001.txt");
+    let batch_target = dir.join("batch_01");
+
+    let target_file = if primary_target.exists() {
+        Some(primary_target)
+    } else if batch_target.exists() {
+        Some(batch_target)
+    } else {
+        None
+    };
+
+    if let Some(target) = target_file {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer")
+                .arg(format!("/select,{}", target.display()))
+                .spawn();
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open")
+                .arg("-R")
+                .arg(&target)
+                .spawn();
+            return;
+        }
+    }
+
     #[cfg(target_os = "windows")]
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
     #[cfg(target_os = "macos")]
@@ -793,4 +997,88 @@ pub fn run_security_audit() -> usize {
         }
     }
     found.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_menu_focuses_on_the_everyday_workflow() {
+        let labels: Vec<&str> = PRIMARY_MENU_ITEMS
+            .iter()
+            .map(|(_, label)| *label)
+            .collect();
+
+        assert_eq!(labels.len(), 5);
+        assert!(labels[0].contains("START AI TASK"));
+        assert!(labels[1].contains("APPLY AI PATCH"));
+        assert!(labels[2].contains("UNDO LAST PATCH"));
+        assert!(labels[3].contains("MORE TOOLS"));
+        assert!(
+            labels
+                .iter()
+                .all(|label| !label.contains("SECURITY AUDIT"))
+        );
+    }
+
+    #[test]
+    fn advanced_actions_remain_available_under_more_tools() {
+        let labels: Vec<&str> = MORE_TOOLS_MENU_ITEMS
+            .iter()
+            .map(|(_, label)| *label)
+            .collect();
+
+        assert_eq!(labels.len(), 4);
+        for expected in [
+            "PREVIEW PATCH",
+            "SECURITY AUDIT",
+            "EDIT PROMPT",
+            "UPDATE CENTAUR",
+        ] {
+            assert!(
+                labels.iter().any(|label| label.contains(expected)),
+                "missing advanced action: {}",
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn export_task_prompt_encourages_actionable_requests() {
+        assert!(EXPORT_TASK_GUIDANCE.contains("desired outcome"));
+        assert!(EXPORT_TASK_GUIDANCE.contains("constraints"));
+        assert!(EXPORT_TASK_GUIDANCE.contains("verified"));
+        assert_eq!(EXPORT_TASK_LABEL, "What should the AI change or review?");
+        assert!(EXPORT_TASK_HELP.starts_with("Example:"));
+    }
+
+    #[test]
+    fn git_export_scope_menu_defaults_to_current_changes() {
+        let scopes = export_scope_options(true);
+
+        assert_eq!(scopes.len(), 4);
+        assert_eq!(scopes[0].0, ExportScopeChoice::Changed);
+        assert_eq!(scopes[0].0.mode(), ExportMode::Changed);
+        assert!(
+            scopes
+                .iter()
+                .any(|(scope, _)| *scope == ExportScopeChoice::Staged)
+        );
+    }
+
+    #[test]
+    fn non_git_export_scope_menu_hides_git_only_choices() {
+        let scopes = export_scope_options(false);
+
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0].0, ExportScopeChoice::Full);
+        assert_eq!(scopes[0].0.mode(), ExportMode::Full);
+        assert!(scopes.iter().all(|(scope, _)| {
+            !matches!(
+                *scope,
+                ExportScopeChoice::Changed | ExportScopeChoice::Staged
+            )
+        }));
+    }
 }
