@@ -40,23 +40,23 @@ cargo install --path .
 
 ```mermaid
 flowchart LR
-    subgraph Repo ["my-project/ Repository"]
-        CodeBase["src/main.rs and src/auth.rs"]
-        History[".centaur/ Snapshot Store"]
+    subgraph Repo ["📁 my-project/ Repository"]
+        CodeBase["📄 src/main.rs and src/auth.rs"]
+        History["📸 .centaur/ Snapshot Store"]
     end
 
-    subgraph Browser ["Web Browser Tab Workflow"]
-        CmdExport["1. centaur --export --mode changed"] --> ContextFiles["2. Attach context files and prompt"]
-        ContextFiles --> AIReply["3. Web AI outputs Search/Replace block"]
-        AIReply --> CmdApply["4. centaur --clipboard"]
+    subgraph Browser ["🌐 Web Browser AI Workflow"]
+        CmdExport["💻 1. centaur --export --mode changed"] --> ContextFiles["📎 2. Attach context & prompt"]
+        ContextFiles --> AIReply["🤖 3. AI outputs Search/Replace block"]
+        AIReply --> CmdApply["📋 4. centaur --clipboard"]
     end
 
-    subgraph IDEExt ["VS Code Extension (editors/vscode)"]
-        Shortcut["Ctrl+Alt+V or Status Bar"] --> ExtAction["centaur.applyClipboard"]
+    subgraph IDEExt ["🧩 VS Code Extension"]
+        Shortcut["⚡ Ctrl+Alt+V or Status Bar"] --> ExtAction["🔌 centaur.applyClipboard"]
     end
 
-    subgraph MCPClient ["Desktop App / MCP Workflow"]
-        SlashCmd["/centaur Slash Command"] --> MCPTools["MCP Tools: get_context, apply_patch, undo"]
+    subgraph MCPClient ["🖥️ Desktop App / MCP Workflow"]
+        SlashCmd["⚡ /centaur Slash Command"] --> MCPTools["🔌 MCP Tools: get_context, apply_patch, undo"]
     end
 
     CmdApply -->|Validate & Write| CodeBase
@@ -71,15 +71,15 @@ Here is how Centaur inspects a project workspace (`my-project/`) and parses patc
 
 ```mermaid
 flowchart TD
-    subgraph RepoTree ["my-project/ Directory Structure"]
+    subgraph RepoTree ["📁 my-project/ Directory Structure"]
         Dir["my-project/\n├── src/\n│   ├── main.rs\n│   └── auth.rs\n├── Cargo.toml\n└── .centaur/"]
     end
 
-    subgraph File1 ["src/main.rs"]
+    subgraph File1 ["📄 src/main.rs"]
         Content1["fn main() {\n    auth::init();\n}"]
     end
 
-    subgraph File2 ["src/auth.rs"]
+    subgraph File2 ["📄 src/auth.rs"]
         Content2["Patch Action:\nSEARCH: pub fn init() {}\nREPLACE: pub fn init() -> Result<()> {}"]
     end
 
