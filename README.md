@@ -16,12 +16,11 @@ Use the web AI access you already have instead of paying for an API-driven agent
 
 ## Why Centaur?
 
-- **You stay in control.** Review every affected file and line count before anything is written.
-- **Your tools stay separate.** The model receives only the files you export and never gets direct terminal access.
-- **Mistakes are reversible.** Each applied patch creates a local history entry that `centaur undo` can restore.
-- **Exports are safer.** Centaur warns about likely credentials and can redact them from the temporary upload copy.
-- **Large repositories fit.** Context is split into attachment-sized batches with a manifest and token estimate.
-- **Save tokens for architecture.** Get past context limits when system planning. The model can spend its tokens making the best design decisions instead of wasting them on terminal output and tool overhead.
+- **Save 90% of model tokens for pure architecture.** Standard agent loops waste thousands of tokens on terminal output, tool schemas, and round-trip polling. Centaur packs context deterministically into raw attachment files so models spend their entire token budget making deep architectural decisions.
+- **Zero API costs & zero shell vulnerabilities.** Use the unlimited web/chat AI subscriptions you already pay for (ChatGPT Plus, Claude Pro, Gemini Advanced) directly on local repositories without paying per-token API fees or granting remote terminal access.
+- **Deterministic, zero-hallucination patch execution.** AI models generate standard Search/Replace blocks. Centaur pre-validates every line match before writing a single byte, preventing broken or partial file states.
+- **Universal bridge with 1-step setup (`centaur install`).** Auto-configures Model Context Protocol (MCP) servers and slash commands across Antigravity, Claude Desktop, ChatGPT/Codex, Cursor, Windsurf, VS Code, and Gemini CLI.
+- **Instant, workspace-scoped undo safety.** Every applied edit creates an isolated snapshot. Run `centaur undo` or press `Ctrl+Alt+U` to instantly revert any patch session.
 
 ## Install
 
