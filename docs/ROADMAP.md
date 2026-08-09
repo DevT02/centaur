@@ -2,6 +2,9 @@
 
 The goal is a short, safe loop from local change to reviewed AI-assisted patch. Priorities below favor faster feedback and fewer recovery steps over feature count.
 
+The complete user-workflow research, shared architecture, and ranked implementation
+backlog are maintained in [USER_WORKFLOWS.md](USER_WORKFLOWS.md).
+
 ## Shipped foundation
 
 - **Unified 1-Step Setup (`centaur install`)**: Auto-configures MCP servers and GUI slash commands across Antigravity, Claude, ChatGPT, Cursor, Windsurf, VS Code, and Gemini CLI.
