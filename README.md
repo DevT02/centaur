@@ -67,7 +67,15 @@ Running `centaur` opens the workspace menu. From there you can enter a task, cho
 `centaur install` adds `/centaur` commands to supported clients, including Antigravity, Claude, ChatGPT/Codex, Cursor, and Windsurf.
 
 <p align="center">
-  <img src="docs/screenshots/gui_slash_commands.png" alt="Centaur GUI Slash Command Menu" width="760" />
+  <img src="docs/screenshots/codex_centaur_slash_command.png" alt="The Centaur command selected in Codex" width="760" />
+  <br />
+  <sub>Codex</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/antigravity_centaur_slash_command.png" alt="The Centaur command selected in Antigravity" width="650" />
+  <br />
+  <sub>Antigravity</sub>
 </p>
 
 ### Browser workflow in ChatGPT
