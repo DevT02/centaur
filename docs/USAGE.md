@@ -83,6 +83,18 @@ context_token_budget = 200000
 
 Set `CENTAUR_HOME` to keep configuration, prompt templates, and history in a portable or isolated directory.
 
+## Updating
+
+Run:
+
+    centaur update
+
+The updater invokes Cargo against Centaur's explicit HTTPS repository with the
+repository lockfile and replaces the installed binary on PATH. It never pulls, builds,
+or installs the repository in the current working directory. This remains a
+source-based update path; signed prebuilt releases are tracked separately in the
+roadmap.
+
 ## Prompt templates
 
 Centaur keeps separate templates for single-message and batched uploads:

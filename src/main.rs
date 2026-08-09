@@ -8,7 +8,7 @@ use std::process::{Command, ExitCode, Stdio};
 use sysinfo::System;
 use the_clipboard_centaur::config::CentaurConfig;
 use the_clipboard_centaur::export;
-use the_clipboard_centaur::git::{ExportMode, is_git_repo};
+use the_clipboard_centaur::git::ExportMode;
 use the_clipboard_centaur::pack::PackOptions;
 use the_clipboard_centaur::parse_blocks;
 use the_clipboard_centaur::patch::{ApplyResult, apply_blocks_transactional};
@@ -316,38 +316,17 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
 }
 
 fn handle_auto_update() -> ExitCode {
-    println!("🔄 Checking for Centaur updates...");
-    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-
-    if is_git_repo(&current_dir) {
-        println!("📥 Pulling latest source code from git repository...");
-        let git_pull = Command::new("git")
-            .arg("pull")
-            .current_dir(&current_dir)
-            .status();
-
-        if let Ok(status) = git_pull {
-            if status.success() {
-                println!("✅ Git repository updated successfully.");
-            }
-        }
-    }
-
-    println!("🔨 Re-building and installing Centaur binary to PATH...");
-    let install_status = Command::new("cargo")
-        .args(["install", "--path", ".", "--force"])
-        .current_dir(&current_dir)
-        .status();
-
-    match install_status {
-        Ok(status) if status.success() => {
-            println!("✅ Centaur successfully updated to the latest version on PATH!");
+    println!(
+        "🔄 Installing the latest Centaur from {}...",
+        the_clipboard_centaur::update::UPDATE_REPOSITORY
+    );
+    match the_clipboard_centaur::update::install_latest() {
+        Ok(()) => {
+            println!("✅ Centaur successfully updated on PATH.");
             ExitCode::SUCCESS
         }
-        _ => {
-            eprintln!(
-                "❌ Auto-update failed during binary installation. Try running 'cargo install --path . --force' manually."
-            );
+        Err(error) => {
+            eprintln!("❌ Auto-update failed: {}", error);
             ExitCode::FAILURE
         }
     }

@@ -11,6 +11,7 @@ pub mod review;
 pub mod secrets;
 pub mod skill;
 pub mod ui;
+pub mod update;
 
 use regex::Regex;
 use std::sync::LazyLock;
