@@ -329,7 +329,7 @@ const MORE_TOOLS_MENU_ITEMS: [(MoreToolsAction, &str); 4] = [
     ),
     (
         MoreToolsAction::Update,
-        "🚀 UPDATE CENTAUR  — Pull source updates and rebuild the CLI",
+        "🚀 UPDATE CENTAUR  — Install latest from the official repository",
     ),
 ];
 
@@ -435,45 +435,24 @@ pub fn run_prompt_edit_interactive() {
 }
 
 pub fn run_auto_update_interactive() {
-    let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!(
         "\n{}",
         "🚀 --- CENTAUR AUTO-UPDATE ---".bright_cyan().bold()
     );
-
-    if is_git_repo(&current_dir) {
-        println!(
-            "{}",
-            "📥 Pulling latest repository updates...".bright_yellow()
-        );
-        let _ = std::process::Command::new("git")
-            .arg("pull")
-            .current_dir(&current_dir)
-            .status();
-    }
-
     println!(
         "{}",
-        "🔨 Re-building and updating Centaur binary on PATH...".bright_yellow()
+        format!("📥 Installing from {}...", crate::update::UPDATE_REPOSITORY).bright_yellow()
     );
-    let status = std::process::Command::new("cargo")
-        .args(["install", "--path", ".", "--force"])
-        .current_dir(&current_dir)
-        .status();
 
-    if let Ok(s) = status {
-        if s.success() {
+    match crate::update::install_latest() {
+        Ok(()) => {
             println!(
                 "{}",
                 "✨ Centaur CLI update complete!".bright_green().bold()
             );
-            return;
         }
+        Err(error) => println!("{}", format!("❌ Update failed: {}", error).bright_red()),
     }
-    println!(
-        "{}",
-        "❌ Failed to update. Try running 'cargo install --path . --force'".bright_red()
-    );
 }
 
 pub fn run_apply_interactive() {
