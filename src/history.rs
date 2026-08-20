@@ -7,6 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct BackupFileRecord {
     pub relative_path: String,
     pub original_content: Option<String>,
+    /// Exact content written by the patch. Undo compares this with the current
+    /// file so it cannot silently overwrite edits made after the session.
+    #[serde(default)]
+    pub applied_content: Option<String>,
     pub is_new_file: bool,
 }
 
@@ -123,6 +127,27 @@ impl PatchSessionRecord {
         for file in &session.files {
             crate::patch::is_safe_path(base_dir, &file.relative_path)
                 .map_err(|e| format!("Refusing to revert unsafe path: {}", e))?;
+
+            let expected_applied = file.applied_content.as_ref().ok_or_else(|| {
+                format!(
+                    "Session '{}' predates drift-safe undo metadata. Refusing to overwrite the current workspace; revert it manually from the history record.",
+                    session.session_id
+                )
+            })?;
+            let target_path = base_dir.join(&file.relative_path);
+            let current = fs::read_to_string(&target_path).ok();
+            let already_original = if file.is_new_file {
+                !target_path.exists()
+            } else {
+                current.as_ref() == file.original_content.as_ref()
+            };
+            let still_applied = current.as_ref() == Some(expected_applied);
+            if !already_original && !still_applied {
+                return Err(format!(
+                    "Refusing to revert session '{}': '{}' changed after the patch was applied.",
+                    session.session_id, file.relative_path
+                ));
+            }
         }
 
         let mut restored = Vec::new();
@@ -172,6 +197,7 @@ mod tests {
         let backup = BackupFileRecord {
             relative_path: "modified.txt".to_string(),
             original_content: Some("Original Content".to_string()),
+            applied_content: Some("Corrupted AI Content".to_string()),
             is_new_file: false,
         };
 

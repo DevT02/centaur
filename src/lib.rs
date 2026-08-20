@@ -19,9 +19,12 @@ use std::sync::LazyLock;
 pub use config::CentaurConfig;
 pub use git::ExportMode;
 pub use pack::{PackOptions, PackResult, pack_files_dynamic};
-pub use patch::{ApplyResult, apply_blocks_transactional};
+pub use patch::{
+    ApplyResult, MemoryPatchPlan, apply_blocks_transactional, apply_planned_transactional,
+    plan_blocks_transactional,
+};
 pub use prompt::{get_prompt_template, render_prompt};
-pub use review::{PatchFileSummary, summarize_patch_blocks};
+pub use review::{PatchFileSummary, render_patch_plan, summarize_patch_blocks};
 
 #[cfg(test)]
 pub(crate) mod test_support {
@@ -45,6 +48,41 @@ pub struct PatchBlock {
     pub file_path: String,
     pub search: String,
     pub replace: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum PatchPayload {
+    NoChanges,
+    Blocks(Vec<PatchBlock>),
+}
+
+/// Parse one complete model response. A payload is accepted only when every
+/// apparent Search/Replace block parses, so a malformed edit can never be
+/// silently dropped while the remaining blocks are applied.
+pub fn parse_patch_payload(text: &str) -> Result<PatchPayload, String> {
+    if text.trim() == "NO_CHANGES" {
+        return Ok(PatchPayload::NoChanges);
+    }
+
+    let blocks = parse_blocks(text);
+    let markers = count_search_markers(text);
+
+    if blocks.is_empty() {
+        return Err(
+            "No valid Search/Replace blocks found. Expected a Centaur patch payload or exactly NO_CHANGES."
+                .to_string(),
+        );
+    }
+
+    if markers != blocks.len() {
+        return Err(format!(
+            "Refusing the entire payload: parsed {} of {} apparent Search/Replace blocks. Fix every delimiter and try again.",
+            blocks.len(),
+            markers
+        ));
+    }
+
+    Ok(PatchPayload::Blocks(blocks))
 }
 
 // Compiled once; parse_blocks runs several times per TUI launch.
@@ -292,6 +330,23 @@ fn new() {}
             2,
             "both markers should be seen"
         );
+    }
+
+    #[test]
+    fn complete_payload_parser_accepts_an_explicit_noop() {
+        assert_eq!(
+            parse_patch_payload("  NO_CHANGES\r\n").unwrap(),
+            PatchPayload::NoChanges
+        );
+    }
+
+    #[test]
+    fn complete_payload_parser_rejects_a_partially_malformed_response() {
+        let input = "File: a.rs\n<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n\n\
+                     File: b.rs\n<<<<<< SEARCH\nold b\n=======\nnew b\n>>>>>> REPLACE\n";
+
+        let error = parse_patch_payload(input).unwrap_err();
+        assert!(error.contains("parsed 1 of 2"), "{error}");
     }
 
     #[test]

@@ -1,5 +1,4 @@
-//! MCP stdio server. Exposes Centaur's transactional apply and undo to GUI chat
-//! clients that have no shell of their own (Claude Desktop and similar).
+//! MCP servers for local stdio clients and remote Streamable HTTP clients.
 //!
 //! The workspace root comes from the launching client's config and is deliberately
 //! not a tool parameter: every path-safety check in `patch.rs` is derived from that
@@ -15,11 +14,13 @@ use crate::history::PatchSessionRecord;
 use crate::pack::{PackOptions, pack_files_dynamic};
 use crate::patch::{ApplyResult, apply_blocks_transactional, is_safe_path};
 use crate::secrets::redact_secrets;
-use crate::{count_search_markers, parse_blocks};
+use crate::{PatchPayload, parse_patch_payload};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Used only when a client omits its own version during initialize.
 const DEFAULT_PROTOCOL_VERSION: &str = "2026-11-05";
@@ -29,6 +30,9 @@ const DEFAULT_PROTOCOL_VERSION: &str = "2026-11-05";
 /// returned at once; roughly 65k tokens per part at Centaur's 3-chars-per-token
 /// estimate.
 const CONTEXT_PART_CHARS: usize = 200_000;
+
+const MAX_HTTP_HEADERS: usize = 64 * 1024;
+const MAX_HTTP_BODY: usize = 8 * 1024 * 1024;
 
 pub fn serve(workspace: &Path) -> Result<(), String> {
     let root = workspace.canonicalize().map_err(|e| {
@@ -61,16 +65,339 @@ pub fn serve(workspace: &Path) -> Result<(), String> {
             }
         };
 
-        // Notifications carry no id. Answering one desyncs strict clients.
-        let Some(id) = request.get("id").cloned() else {
-            continue;
-        };
-
-        let response = dispatch(&root, &id, &request);
-        send(&mut stdout, &response)?;
+        if let Some(response) = handle_message(&root, &request) {
+            send(&mut stdout, &response)?;
+        }
     }
 
     Ok(())
+}
+
+/// Serve the same MCP tools over Streamable HTTP. TLS belongs at the tunnel or
+/// reverse-proxy boundary; Centaur deliberately binds only to loopback so the
+/// repository is never exposed directly on the LAN.
+pub fn serve_http(
+    workspace: &Path,
+    bind: SocketAddr,
+    bearer_token: &str,
+    allowed_origins: &[String],
+) -> Result<(), String> {
+    if !bind.ip().is_loopback() {
+        return Err(format!(
+            "Remote MCP must bind to loopback, not {}. Put an authenticated HTTPS tunnel or reverse proxy in front of it.",
+            bind.ip()
+        ));
+    }
+    if bearer_token.len() < 32 {
+        return Err("CENTAUR_MCP_TOKEN must contain at least 32 characters.".to_string());
+    }
+
+    let root = workspace.canonicalize().map_err(|e| {
+        format!(
+            "Could not resolve workspace '{}': {}",
+            workspace.display(),
+            e
+        )
+    })?;
+    let listener = TcpListener::bind(bind)
+        .map_err(|e| format!("Could not listen for remote MCP on {}: {}", bind, e))?;
+    eprintln!(
+        "centaur mcp: serving {} at http://{}/mcp",
+        root.display(),
+        bind
+    );
+
+    for connection in listener.incoming() {
+        match connection {
+            Ok(mut stream) => {
+                let response = match read_http_request(&mut stream) {
+                    Ok(request) => {
+                        handle_http_request(&root, bearer_token, allowed_origins, &request)
+                    }
+                    Err(e) => HttpResponse::text(400, "Bad Request", &e),
+                };
+                if let Err(e) = write_http_response(&mut stream, &response) {
+                    eprintln!("centaur mcp: response failed: {}", e);
+                }
+            }
+            Err(e) => eprintln!("centaur mcp: connection failed: {}", e),
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_message(root: &Path, request: &Value) -> Option<Value> {
+    // Notifications carry no id. Answering one desyncs strict clients.
+    let id = request.get("id")?;
+    Some(dispatch(root, id, request))
+}
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl HttpRequest {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn header_count(&self, name: &str) -> usize {
+        self.headers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+            .count()
+    }
+}
+
+struct HttpResponse {
+    status: u16,
+    reason: &'static str,
+    content_type: &'static str,
+    headers: Vec<(&'static str, String)>,
+    body: Vec<u8>,
+}
+
+impl HttpResponse {
+    fn text(status: u16, reason: &'static str, text: &str) -> Self {
+        Self {
+            status,
+            reason,
+            content_type: "text/plain; charset=utf-8",
+            headers: Vec::new(),
+            body: text.as_bytes().to_vec(),
+        }
+    }
+
+    fn json(status: u16, reason: &'static str, value: &Value) -> Self {
+        Self {
+            status,
+            reason,
+            content_type: "application/json",
+            headers: Vec::new(),
+            body: value.to_string().into_bytes(),
+        }
+    }
+
+    fn empty(status: u16, reason: &'static str) -> Self {
+        Self {
+            status,
+            reason,
+            content_type: "application/json",
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+
+    fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Self {
+        self.headers.push((name, value.into()));
+        self
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(|e| e.to_string())?;
+
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let header_end = loop {
+        let read = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Err("Connection closed before the HTTP headers were complete.".to_string());
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break end + 4;
+        }
+        if bytes.len() > MAX_HTTP_HEADERS {
+            return Err("HTTP headers are too large.".to_string());
+        }
+    };
+
+    let header_text = std::str::from_utf8(&bytes[..header_end - 4])
+        .map_err(|_| "HTTP headers are not valid UTF-8.".to_string())?;
+    let mut lines = header_text.split("\r\n");
+    let mut request_line = lines
+        .next()
+        .ok_or_else(|| "Missing HTTP request line.".to_string())?
+        .split_whitespace();
+    let method = request_line
+        .next()
+        .ok_or_else(|| "Missing HTTP method.".to_string())?
+        .to_string();
+    let path = request_line
+        .next()
+        .ok_or_else(|| "Missing HTTP path.".to_string())?
+        .to_string();
+    if request_line.next().is_none() || request_line.next().is_some() {
+        return Err("Malformed HTTP request line.".to_string());
+    }
+
+    let mut headers = Vec::new();
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| "Malformed HTTP header.".to_string())?;
+        headers.push((name.trim().to_string(), value.trim().to_string()));
+    }
+    if headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("transfer-encoding"))
+    {
+        return Err("Transfer-Encoding is not supported.".to_string());
+    }
+    let content_lengths: Vec<_> = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .map(|(_, value)| {
+            value
+                .parse::<usize>()
+                .map_err(|_| "Invalid Content-Length header.".to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    if content_lengths.len() > 1 {
+        return Err("Multiple Content-Length headers are not allowed.".to_string());
+    }
+    let content_length = content_lengths.first().copied().unwrap_or(0);
+    if content_length > MAX_HTTP_BODY {
+        return Err(format!(
+            "HTTP body exceeds the {} byte limit.",
+            MAX_HTTP_BODY
+        ));
+    }
+
+    while bytes.len() - header_end < content_length {
+        let read = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Err("Connection closed before the HTTP body was complete.".to_string());
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() - header_end > MAX_HTTP_BODY {
+            return Err(format!(
+                "HTTP body exceeds the {} byte limit.",
+                MAX_HTTP_BODY
+            ));
+        }
+    }
+
+    Ok(HttpRequest {
+        method,
+        path,
+        headers,
+        body: bytes[header_end..header_end + content_length].to_vec(),
+    })
+}
+
+fn handle_http_request(
+    root: &Path,
+    bearer_token: &str,
+    allowed_origins: &[String],
+    request: &HttpRequest,
+) -> HttpResponse {
+    if request.path.split('?').next() != Some("/mcp") {
+        return HttpResponse::text(404, "Not Found", "Not found.");
+    }
+    if request.header_count("origin") > 1 {
+        return HttpResponse::text(403, "Forbidden", "Multiple Origin headers are not allowed.");
+    }
+    if let Some(origin) = request.header("origin")
+        && !allowed_origins.iter().any(|allowed| allowed == origin)
+    {
+        return HttpResponse::text(403, "Forbidden", "Origin is not allowed.");
+    }
+    if request.method == "GET" {
+        return HttpResponse::text(
+            405,
+            "Method Not Allowed",
+            "This server does not provide an SSE event stream.",
+        )
+        .with_header("Allow", "POST");
+    }
+    if request.method != "POST" {
+        return HttpResponse::text(405, "Method Not Allowed", "Use POST for MCP messages.")
+            .with_header("Allow", "POST");
+    }
+    if request.header_count("authorization") != 1
+        || !valid_bearer_token(request.header("authorization"), bearer_token)
+    {
+        return HttpResponse::text(401, "Unauthorized", "A valid bearer token is required.")
+            .with_header("WWW-Authenticate", "Bearer realm=\"centaur\"");
+    }
+    if !request
+        .header("content-type")
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+    {
+        return HttpResponse::text(415, "Unsupported Media Type", "Use application/json.");
+    }
+
+    let message: Value = match serde_json::from_slice::<Value>(&request.body) {
+        Ok(value) if value.is_object() => value,
+        Ok(_) => {
+            return HttpResponse::json(
+                400,
+                "Bad Request",
+                &error_response(Value::Null, -32600, "JSON-RPC message must be an object"),
+            );
+        }
+        Err(e) => {
+            return HttpResponse::json(
+                400,
+                "Bad Request",
+                &error_response(Value::Null, -32700, &e.to_string()),
+            );
+        }
+    };
+
+    match handle_message(root, &message) {
+        Some(response) => HttpResponse::json(200, "OK", &response),
+        None => HttpResponse::empty(202, "Accepted"),
+    }
+}
+
+fn valid_bearer_token(header: Option<&str>, expected: &str) -> bool {
+    let Some((scheme, token)) = header.and_then(|value| value.split_once(' ')) else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("bearer") && constant_time_eq(token.as_bytes(), expected.as_bytes())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+fn write_http_response(stream: &mut TcpStream, response: &HttpResponse) -> Result<(), String> {
+    write!(
+        stream,
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        response.status,
+        response.reason,
+        response.content_type,
+        response.body.len()
+    )
+    .map_err(|e| e.to_string())?;
+    for (name, value) in &response.headers {
+        write!(stream, "{}: {}\r\n", name, value).map_err(|e| e.to_string())?;
+    }
+    write!(stream, "\r\n").map_err(|e| e.to_string())?;
+    stream
+        .write_all(&response.body)
+        .map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())
 }
 
 fn dispatch(root: &Path, id: &Value, request: &Value) -> Value {
@@ -157,6 +484,13 @@ fn tool_definitions() -> Value {
                                         will not match."
                     }
                 }
+            },
+            "annotations": {
+                "title": "Read workspace context",
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
             }
         },
         {
@@ -180,6 +514,13 @@ fn tool_definitions() -> Value {
                     }
                 },
                 "required": ["text"]
+            },
+            "annotations": {
+                "title": "Apply workspace patch",
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false
             }
         },
         {
@@ -194,6 +535,13 @@ fn tool_definitions() -> Value {
                         "description": "Session id to revert, or 'latest'. Default 'latest'."
                     }
                 }
+            },
+            "annotations": {
+                "title": "Undo workspace patch",
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false
             }
         }
     ])
@@ -350,15 +698,16 @@ fn apply_patch(root: &Path, arguments: &Value) -> (String, bool) {
         return ("Missing required argument: text".to_string(), true);
     };
 
-    let blocks = parse_blocks(text);
-    if blocks.is_empty() {
-        return (
-            "No Search/Replace blocks found. Each edit needs a 'File: <path>' line followed by \
-             <<<<<<< SEARCH / ======= / >>>>>>> REPLACE."
-                .to_string(),
-            true,
-        );
-    }
+    let blocks = match parse_patch_payload(text) {
+        Ok(PatchPayload::NoChanges) => {
+            return (
+                "No changes requested; the workspace was left untouched.".to_string(),
+                false,
+            );
+        }
+        Ok(PatchPayload::Blocks(blocks)) => blocks,
+        Err(error) => return (error, true),
+    };
 
     let dry_run = arguments
         .get("dry_run")
@@ -366,14 +715,6 @@ fn apply_patch(root: &Path, arguments: &Value) -> (String, bool) {
         .unwrap_or(false);
 
     let mut report = String::new();
-    let markers = count_search_markers(text);
-    if markers > blocks.len() {
-        report.push_str(&format!(
-            "warning: {} of {} blocks had malformed delimiters and were skipped\n",
-            markers - blocks.len(),
-            markers
-        ));
-    }
 
     match apply_blocks_transactional(root, &blocks, dry_run) {
         Ok(results) => {
@@ -431,6 +772,9 @@ fn describe(result: &ApplyResult) -> String {
             "search text matches more than once in {}; include more surrounding lines",
             path
         ),
+        ApplyResult::SourceChanged(path) => {
+            format!("source changed after review: {}; create a fresh plan", path)
+        }
         ApplyResult::IoError(path, err) => format!("write failed for {}: {}", path, err),
         ApplyResult::SecurityError(err) => format!("refused: {}", err),
     }
@@ -720,6 +1064,26 @@ mod tests {
     }
 
     #[test]
+    fn apply_tool_accepts_no_changes_and_rejects_partial_payloads() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("keep.txt");
+        fs::write(&target, "original").unwrap();
+
+        let (report, is_error) =
+            call_tool(dir.path(), "apply_patch", &json!({ "text": "NO_CHANGES" }));
+        assert!(!is_error, "{}", report);
+        assert!(report.contains("left untouched"));
+
+        let malformed = "File: keep.txt\n<<<<<<< SEARCH\noriginal\n=======\npatched\n>>>>>>> REPLACE\n\n\
+                         File: other.txt\n<<<<<< SEARCH\n=======\ncreated\n>>>>>> REPLACE\n";
+        let (report, is_error) =
+            call_tool(dir.path(), "apply_patch", &json!({ "text": malformed }));
+        assert!(is_error, "{}", report);
+        assert!(report.contains("parsed 1 of 2"), "{}", report);
+        assert_eq!(fs::read_to_string(target).unwrap(), "original");
+    }
+
+    #[test]
     fn get_context_returns_file_contents_and_refuses_to_leave_the_workspace() {
         let dir = tempdir().unwrap();
         std::fs::write(
@@ -775,5 +1139,97 @@ mod tests {
 
         let written: Value = serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
         assert!(written["mcpServers"]["centaur"]["command"].is_string());
+    }
+
+    #[test]
+    fn http_transport_requires_auth_and_marks_write_tools() {
+        let dir = tempdir().unwrap();
+        let token = "0123456789abcdef0123456789abcdef";
+        let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_vec();
+        let request = |authorization: Option<&str>, origin: Option<&str>| {
+            let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
+            if let Some(value) = authorization {
+                headers.push(("Authorization".to_string(), value.to_string()));
+            }
+            if let Some(value) = origin {
+                headers.push(("Origin".to_string(), value.to_string()));
+            }
+            HttpRequest {
+                method: "POST".to_string(),
+                path: "/mcp".to_string(),
+                headers,
+                body: body.clone(),
+            }
+        };
+
+        let unauthorized = handle_http_request(dir.path(), token, &[], &request(None, None));
+        assert_eq!(unauthorized.status, 401);
+
+        let rejected_origin = handle_http_request(
+            dir.path(),
+            token,
+            &[],
+            &request(
+                Some(&format!("Bearer {}", token)),
+                Some("https://example.com"),
+            ),
+        );
+        assert_eq!(rejected_origin.status, 403);
+
+        let response = handle_http_request(
+            dir.path(),
+            token,
+            &[],
+            &request(Some(&format!("Bearer {}", token)), None),
+        );
+        assert_eq!(response.status, 200);
+        let message: Value = serde_json::from_slice(&response.body).unwrap();
+        let tools = message["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
+        assert_eq!(tools[1]["annotations"]["destructiveHint"], true);
+    }
+
+    #[test]
+    fn http_transport_refuses_non_loopback_bindings() {
+        let dir = tempdir().unwrap();
+        let result = serve_http(
+            dir.path(),
+            "0.0.0.0:3765".parse().unwrap(),
+            "0123456789abcdef0123456789abcdef",
+            &[],
+        );
+        assert!(result.unwrap_err().contains("loopback"));
+    }
+
+    #[test]
+    fn http_transport_handles_a_real_loopback_request() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream).unwrap();
+            let response =
+                handle_http_request(&root, "0123456789abcdef0123456789abcdef", &[], &request);
+            write_http_response(&mut stream, &response).unwrap();
+        });
+
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let mut client = TcpStream::connect(address).unwrap();
+        write!(
+            client,
+            "POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        server.join().unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("\"name\":\"get_context\""));
     }
 }

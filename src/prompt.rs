@@ -5,32 +5,41 @@ use std::path::PathBuf;
 use std::process::Command;
 
 // Used when codebase fits in a single upload message — no batching handshake needed
-pub const DEFAULT_PROMPT_TEMPLATE_SINGLE: &str = r#"I am attaching my codebase exported by The Clipboard Centaur ({{TOTAL_PARTS}} file(s), session {{SESSION_ID}}).
+pub const DEFAULT_PROMPT_TEMPLATE_SINGLE: &str = r#"I am attaching my codebase exported by The Clipboard Centaur
+({{TOTAL_PARTS}} file(s), session {{SESSION_ID}}).
 
-Please read all attached files and then complete this task:
+Read all supplied context, then complete this task:
 {{USER_TASK}}
 
-OUTPUT FORMAT FOR CODE MODIFICATIONS
-When proposing code modifications or creating files, output Search/Replace blocks in this EXACT format:
+CENTAUR OUTPUT CONTRACT
+
+If code changes are required, your entire final response must contain ONLY
+Centaur patch data. Do not include Markdown fences, explanations, summaries,
+headings, commentary, or any text before or after the patches.
+
+For each edit, emit:
 
 File: src/path/to/file.rs
 <<<<<<< SEARCH
-exact original lines of code from the file
+exact existing file content
 =======
-new replacement lines of code
+replacement content
 >>>>>>> REPLACE
 
-CRITICAL PATCH RULES:
-1. Do NOT wrap Search/Replace blocks in backticks (```).
-2. Use relative file paths exactly as shown in the context upload (e.g., src/main.rs). Do NOT add ./ or placeholders.
-3. Every SEARCH section must contain EXACT matching lines from the current file content. Include 2-3 surrounding lines of context to ensure a unique match.
-4. To create a NEW file, leave the SEARCH section empty:
-File: src/new_file.rs
-<<<<<<< SEARCH
-=======
-// new file content
->>>>>>> REPLACE
-5. Keep explanations AFTER all Search/Replace blocks.
+Rules:
+- Use workspace-relative paths exactly as supplied.
+- SEARCH must reproduce existing file content exactly.
+- Include enough surrounding content for SEARCH to match exactly once.
+- Prefer the smallest complete edit.
+- For a new file, use an empty SEARCH section.
+- Emit as many patches as necessary, one after another.
+- Do not describe edits outside the patch data.
+- Do not include unchanged files.
+- Do not invent patches merely to provide an answer.
+
+If the task requires no file changes, respond with exactly:
+
+NO_CHANGES
 "#;
 
 // Used when the codebase is too large and must be sent across multiple upload messages
@@ -49,27 +58,35 @@ Until you receive the final part:
 When all parts are provided, perform this task:
 {{USER_TASK}}
 
-OUTPUT FORMAT FOR CODE MODIFICATIONS
-When proposing code modifications or creating files, output Search/Replace blocks in this EXACT format:
+CENTAUR OUTPUT CONTRACT
+
+If code changes are required, your entire final response must contain ONLY
+Centaur patch data. Do not include Markdown fences, explanations, summaries,
+headings, commentary, or any text before or after the patches.
+
+For each edit, emit:
 
 File: src/path/to/file.rs
 <<<<<<< SEARCH
-exact original lines of code from the file
+exact existing file content
 =======
-new replacement lines of code
+replacement content
 >>>>>>> REPLACE
 
-CRITICAL PATCH RULES:
-1. Do NOT wrap Search/Replace blocks in backticks (```).
-2. Use relative file paths exactly as shown in the context upload (e.g., src/main.rs). Do NOT add ./ or placeholders.
-3. Every SEARCH section must contain EXACT matching lines from the current file content. Include 2-3 surrounding lines of context to ensure a unique match.
-4. To create a NEW file, leave the SEARCH section empty:
-File: src/new_file.rs
-<<<<<<< SEARCH
-=======
-// new file content
->>>>>>> REPLACE
-5. Keep explanations AFTER all Search/Replace blocks.
+Rules:
+- Use workspace-relative paths exactly as supplied.
+- SEARCH must reproduce existing file content exactly.
+- Include enough surrounding content for SEARCH to match exactly once.
+- Prefer the smallest complete edit.
+- For a new file, use an empty SEARCH section.
+- Emit as many patches as necessary, one after another.
+- Do not describe edits outside the patch data.
+- Do not include unchanged files.
+- Do not invent patches merely to provide an answer.
+
+If the task requires no file changes, respond with exactly:
+
+NO_CHANGES
 "#;
 
 pub fn prompt_template_path() -> PathBuf {
@@ -118,7 +135,7 @@ pub fn render_prompt(
     };
 
     let task_with_rules = format!(
-        "{}\n\nWORKING RULES\n- Treat the task above as the source of truth. Do not invent unrelated features.\n- Inspect all supplied files before proposing changes.\n- Make the smallest complete change that solves the task and preserves existing behavior.\n- Fix additional correctness or security issues only when they are high-confidence and explain them separately.\n- Add or update focused tests whenever behavior changes.\n- Do not claim that tests or commands were run unless they were actually run.\n- If no code changes are needed, say so clearly and do not invent Search/Replace blocks.",
+        "{}\n\nWORKING RULES\n- Treat the task above as the source of truth. Do not invent unrelated features.\n- Inspect all supplied files before proposing changes.\n- Make the smallest complete change that solves the task and preserves existing behavior.\n- Do not make unrelated changes. Only include additional correctness or security fixes when they are high-confidence and directly justified.\n- Add or update focused tests whenever behavior changes.\n- Do not claim that tests or commands were run unless they were actually run.\n- If no file changes are needed, follow the output contract and return NO_CHANGES.",
         task_text
     );
 
@@ -221,5 +238,10 @@ mod tests {
         assert!(rendered.contains("Fix bug in main"));
         assert!(rendered.contains("5 numbered context files"));
         assert!(rendered.contains("across 2 upload messages"));
+        assert!(rendered.contains("CENTAUR OUTPUT CONTRACT"));
+        assert!(rendered.contains("Centaur patch data"));
+        assert!(rendered.contains("return NO_CHANGES"));
+        assert!(!rendered.contains("Keep explanations AFTER"));
+        assert!(!rendered.contains("explain them separately"));
     }
 }

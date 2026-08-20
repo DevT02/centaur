@@ -1,16 +1,18 @@
 # Architecture
 
-Centaur is a local bridge. It prepares context and prompts, but the user performs the browser upload and decides whether validated edits are applied.
+Centaur is a local bridge. MCP clients can call workspace-scoped tools directly; the export workflow remains available when a client has no MCP connection.
 
 ```mermaid
 flowchart LR
-    A["Local workspace"] --> B["Collect and scan files"]
-    B --> C["Pack context and prompt"]
-    C --> D["User uploads to browser AI"]
-    D --> E["Search/Replace response"]
-    E --> F["Parse, validate, and preview"]
-    F --> G["Undo snapshot"]
-    G --> H["Apply local writes"]
+    A["Local workspace"] --> B["Centaur MCP tools"]
+    B --> C["stdio client"]
+    B --> D["loopback HTTP"]
+    D --> E["authenticated HTTPS tunnel"]
+    C --> F["AI client"]
+    E --> F
+    F --> B
+    B --> G["Validate every patch"]
+    G --> H["Undo snapshot"]
     H --> A
 ```
 
@@ -26,12 +28,22 @@ flowchart LR
 
 ## Apply pipeline
 
-1. `lib::parse_blocks` extracts and cleans Search/Replace blocks from clipboard or file input.
-2. `review::summarize_patch_blocks` prepares the human review.
-3. `patch::apply_blocks_transactional` validates paths and computes every resulting file in memory.
-4. Any missing, ambiguous, or unsafe block aborts the plan before disk writes.
-5. `history::PatchSessionRecord` stores original contents before writes begin.
-6. Files are written through temporary paths. `centaur undo` restores the workspace-scoped snapshot.
+1. `lib::parse_patch_payload` accepts exactly `NO_CHANGES` or a complete set of parseable Search/Replace blocks from clipboard, file, or standard input.
+2. `patch::plan_blocks_transactional` validates paths and computes every resulting file in memory.
+3. `review::render_patch_plan` renders the exact in-memory before/after result for approval.
+4. Any malformed, missing, ambiguous, or unsafe block aborts the complete payload before disk writes.
+5. `patch::apply_planned_transactional` verifies that every reviewed source is still current.
+6. `history::PatchSessionRecord` stores both original and applied content before writes begin.
+7. Files are written through temporary paths.
+8. Undo history is workspace-scoped and checked for later edits before a session can be restored.
+
+## MCP transports
+
+1. `mcp::serve` reads newline-delimited JSON-RPC over stdio for local clients and private tunnel helpers.
+2. `mcp::serve_http` accepts JSON-RPC POST requests at `/mcp` for remote clients.
+3. Both transports call the same dispatcher and therefore expose identical tools and safety behavior.
+4. HTTP binds only to a loopback address, requires a bearer token, limits request sizes, and rejects origins unless explicitly allowed.
+5. An external tunnel or reverse proxy supplies public HTTPS and provider-compatible OAuth. Centaur never opens a public listener itself.
 
 ## Module map
 
@@ -49,7 +61,7 @@ flowchart LR
 | `prompt.rs` | Default/custom prompt templates and placeholder rendering |
 | `config.rs` | Persistent export settings and `CENTAUR_HOME` |
 | `review.rs` | Per-file patch summaries |
-| `mcp.rs` | MCP stdio server exposing apply and undo to shell-less GUI clients |
+| `mcp.rs` | Shared MCP tools plus stdio and authenticated Streamable HTTP transports |
 
 ## Safety invariants
 
@@ -61,6 +73,7 @@ flowchart LR
 - Redaction must never mutate the source workspace.
 - Undo sessions must be visible only from the workspace that created them.
 - The MCP workspace root comes from the launching client's configuration, never from a tool argument.
+- Remote HTTP must bind to loopback and authenticate every MCP POST before dispatch.
 - Existing CRLF line endings and UTF-8 BOM behavior must remain stable.
 
 Tests for these boundaries belong in `tests/regressions.rs` or `tests/intricate_edge_cases.rs`. CLI exit behavior belongs in `tests/exit_codes.rs`; Git status parsing belongs in `tests/git_changed.rs`.
