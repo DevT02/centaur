@@ -2,7 +2,7 @@ use std::fs;
 use tempfile::tempdir;
 use the_clipboard_centaur::history::{BackupFileRecord, PatchSessionRecord};
 use the_clipboard_centaur::{
-    apply_blocks_transactional, pack_files_dynamic, PackOptions, PatchBlock,
+    PackOptions, PatchBlock, apply_blocks_transactional, pack_files_dynamic,
 };
 
 /// Keep patch history out of the developer's real config directory.
@@ -34,7 +34,10 @@ fn search_block_longer_than_file_does_not_panic() {
 
     let res = apply_blocks_transactional(dir.path(), &blocks, true);
     assert!(res.is_err(), "unmatchable block should fail, not apply");
-    assert_eq!(fs::read_to_string(dir.path().join("small.rs")).unwrap(), "aaa\nbbb\n");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("small.rs")).unwrap(),
+        "aaa\nbbb\n"
+    );
 }
 
 /// History is stored globally. Reverting from a different workspace used to
@@ -56,12 +59,22 @@ fn undo_does_not_reach_into_another_workspace() {
 
     // "latest" from inside project B must not see project A's session.
     let res = PatchSessionRecord::revert_session(proj_b.path(), "latest");
-    assert!(res.is_err(), "cross-workspace revert should be refused: {:?}", res);
-    assert_eq!(fs::read_to_string(proj_b.path().join("shared.txt")).unwrap(), "PROJECT B\n");
+    assert!(
+        res.is_err(),
+        "cross-workspace revert should be refused: {:?}",
+        res
+    );
+    assert_eq!(
+        fs::read_to_string(proj_b.path().join("shared.txt")).unwrap(),
+        "PROJECT B\n"
+    );
 
     // ...but reverting inside project A still works.
     PatchSessionRecord::revert_session(proj_a.path(), "latest").unwrap();
-    assert_eq!(fs::read_to_string(proj_a.path().join("shared.txt")).unwrap(), "PROJECT A\n");
+    assert_eq!(
+        fs::read_to_string(proj_a.path().join("shared.txt")).unwrap(),
+        "PROJECT A\n"
+    );
 }
 
 /// Session records are on-disk input; a traversing path must not be written.
@@ -72,20 +85,31 @@ fn revert_refuses_paths_outside_the_workspace() {
     let outside = tempdir().unwrap();
     fs::write(outside.path().join("victim.txt"), "ORIGINAL\n").unwrap();
 
-    let escape = format!("../{}/victim.txt", outside.path().file_name().unwrap().to_string_lossy());
+    let escape = format!(
+        "../{}/victim.txt",
+        outside.path().file_name().unwrap().to_string_lossy()
+    );
     let id = PatchSessionRecord::record_patch_session(
         workspace.path(),
         vec![BackupFileRecord {
             relative_path: escape,
             original_content: Some("OVERWRITTEN\n".to_string()),
+            applied_content: Some("current\n".to_string()),
             is_new_file: false,
         }],
     )
     .unwrap();
 
     let res = PatchSessionRecord::revert_session(workspace.path(), &id);
-    assert!(res.is_err(), "traversing revert should be refused: {:?}", res);
-    assert_eq!(fs::read_to_string(outside.path().join("victim.txt")).unwrap(), "ORIGINAL\n");
+    assert!(
+        res.is_err(),
+        "traversing revert should be refused: {:?}",
+        res
+    );
+    assert_eq!(
+        fs::read_to_string(outside.path().join("victim.txt")).unwrap(),
+        "ORIGINAL\n"
+    );
 }
 
 /// Applying a patch must never leave the workspace changed with no way back.
@@ -107,8 +131,15 @@ fn applying_a_patch_records_an_undo_snapshot_for_this_workspace() {
     .unwrap();
 
     let sessions = PatchSessionRecord::list_sessions_for(dir.path());
-    assert_eq!(sessions.len(), 1, "expected exactly one session for this workspace");
-    assert_eq!(sessions[0].files[0].original_content.as_deref(), Some("before\n"));
+    assert_eq!(
+        sessions.len(),
+        1,
+        "expected exactly one session for this workspace"
+    );
+    assert_eq!(
+        sessions[0].files[0].original_content.as_deref(),
+        Some("before\n")
+    );
 }
 
 #[test]
@@ -166,7 +197,44 @@ fn duplicate_export_paths_are_packed_once() {
     );
 
     assert_eq!(result.summary.total_files, 1);
-    assert_eq!(result.chunks[0].content.matches("File: `src.rs`").count(), 1);
+    assert_eq!(
+        result.chunks[0].content.matches("File: `src.rs`").count(),
+        1
+    );
+}
+
+#[test]
+fn undo_refuses_drift_without_partially_restoring_other_files() {
+    use_scratch_home();
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "before a\n").unwrap();
+    fs::write(dir.path().join("b.txt"), "before b\n").unwrap();
+    let blocks = vec![
+        PatchBlock {
+            file_path: "a.txt".to_string(),
+            search: "before a".to_string(),
+            replace: "applied a".to_string(),
+        },
+        PatchBlock {
+            file_path: "b.txt".to_string(),
+            search: "before b".to_string(),
+            replace: "applied b".to_string(),
+        },
+    ];
+    apply_blocks_transactional(dir.path(), &blocks, false).unwrap();
+    fs::write(dir.path().join("b.txt"), "later user edit\n").unwrap();
+
+    let error = PatchSessionRecord::revert_session(dir.path(), "latest").unwrap_err();
+
+    assert!(error.contains("changed after the patch"), "{error}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "applied a\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "later user edit\n"
+    );
 }
 
 #[cfg(unix)]

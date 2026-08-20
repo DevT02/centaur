@@ -9,6 +9,7 @@ pub enum ApplyResult {
     Updated(String),
     MatchNotFound(String),
     AmbiguousMatch(String),
+    SourceChanged(String),
     IoError(String, String),
     SecurityError(String),
     DryRunSimulated(String),
@@ -45,11 +46,37 @@ pub fn is_safe_path(base_dir: &Path, rel_path_str: &str) -> Result<PathBuf, Stri
     Ok(combined)
 }
 
+fn validate_existing_ancestor(
+    canonical_base: &Path,
+    target_path: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    let mut existing_ancestor = target_path;
+    while !existing_ancestor.exists() {
+        existing_ancestor = existing_ancestor
+            .parent()
+            .ok_or_else(|| format!("Could not resolve a safe parent for {}", relative_path))?;
+    }
+
+    let canonical_ancestor = existing_ancestor
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve path '{}': {}", relative_path, e))?;
+    if !canonical_ancestor.starts_with(canonical_base) {
+        return Err(format!(
+            "Path resolves outside workspace: {}",
+            relative_path
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
 pub struct MemoryPatchPlan {
-    pub block: PatchBlock,
-    pub target_path: PathBuf,
-    pub new_content: String,
-    pub is_new_file: bool,
+    pub(crate) block: PatchBlock,
+    pub(crate) target_path: PathBuf,
+    pub(crate) original_content: Option<String>,
+    pub(crate) new_content: String,
+    pub(crate) is_new_file: bool,
 }
 
 pub fn evaluate_patch_block(
@@ -68,6 +95,7 @@ pub fn evaluate_patch_block(
             return Ok(MemoryPatchPlan {
                 block: block.clone(),
                 target_path,
+                original_content: None,
                 new_content: block.replace.clone(),
                 is_new_file: true,
             });
@@ -76,10 +104,11 @@ pub fn evaluate_patch_block(
         }
     }
 
-    let mut content = match fs::read_to_string(&target_path) {
+    let original_content = match fs::read_to_string(&target_path) {
         Ok(c) => c,
         Err(e) => return Err(ApplyResult::IoError(file_path_str, e.to_string())),
     };
+    let mut content = original_content.clone();
 
     if content.starts_with('\u{FEFF}') {
         content = content[3..].to_string();
@@ -96,6 +125,7 @@ pub fn evaluate_patch_block(
         return Ok(MemoryPatchPlan {
             block: block.clone(),
             target_path,
+            original_content: Some(original_content),
             new_content: updated,
             is_new_file: false,
         });
@@ -121,6 +151,7 @@ pub fn evaluate_patch_block(
         return Ok(MemoryPatchPlan {
             block: block.clone(),
             target_path,
+            original_content: Some(original_content),
             new_content: final_content,
             is_new_file: false,
         });
@@ -133,6 +164,7 @@ pub fn evaluate_patch_block(
                 return Ok(MemoryPatchPlan {
                     block: block.clone(),
                     target_path,
+                    original_content: Some(original_content),
                     new_content: updated,
                     is_new_file: false,
                 });
@@ -192,11 +224,10 @@ fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<Resul
     }
 }
 
-pub fn apply_blocks_transactional(
+pub fn plan_blocks_transactional(
     base_dir: &Path,
     blocks: &[PatchBlock],
-    dry_run: bool,
-) -> Result<Vec<ApplyResult>, (Vec<ApplyResult>, String)> {
+) -> Result<Vec<MemoryPatchPlan>, (Vec<ApplyResult>, String)> {
     let transaction_error = "Transactional application failed: 1 or more patch blocks could not be matched cleanly. Aborting transaction without modifying disk.";
     let canonical_base = match base_dir.canonicalize() {
         Ok(path) => path,
@@ -266,41 +297,11 @@ pub fn apply_blocks_transactional(
 
         // Validate the nearest existing ancestor. This closes the new-file case
         // where a symlinked parent could otherwise redirect a write outside root.
-        let mut existing_ancestor = target_path.as_path();
-        let mut safe_ancestor_found = true;
-        while !existing_ancestor.exists() {
-            match existing_ancestor.parent() {
-                Some(parent) => existing_ancestor = parent,
-                None => {
-                    failures.push(ApplyResult::SecurityError(format!(
-                        "Could not resolve a safe parent for {}",
-                        block.file_path
-                    )));
-                    safe_ancestor_found = false;
-                    break;
-                }
-            }
-        }
-        if !safe_ancestor_found {
+        if let Err(error) =
+            validate_existing_ancestor(&canonical_base, &target_path, &block.file_path)
+        {
+            failures.push(ApplyResult::SecurityError(error));
             continue;
-        }
-
-        match existing_ancestor.canonicalize() {
-            Ok(path) if path.starts_with(&canonical_base) => {}
-            Ok(_) => {
-                failures.push(ApplyResult::SecurityError(format!(
-                    "Path resolves outside workspace: {}",
-                    block.file_path
-                )));
-                continue;
-            }
-            Err(e) => {
-                failures.push(ApplyResult::SecurityError(format!(
-                    "Could not resolve path '{}': {}",
-                    block.file_path, e
-                )));
-                continue;
-            }
         }
 
         if let Some(plan_index) = plans
@@ -324,21 +325,69 @@ pub fn apply_blocks_transactional(
         return Err((failures, transaction_error.to_string()));
     }
 
-    let mut results = Vec::new();
+    Ok(plans)
+}
 
-    if dry_run {
-        for plan in plans {
-            results.push(ApplyResult::DryRunSimulated(plan.block.file_path));
+pub fn apply_planned_transactional(
+    base_dir: &Path,
+    plans: &[MemoryPatchPlan],
+) -> Result<Vec<ApplyResult>, (Vec<ApplyResult>, String)> {
+    let canonical_base = base_dir.canonicalize().map_err(|error| {
+        (
+            vec![ApplyResult::SecurityError(format!(
+                "Could not resolve workspace root: {}",
+                error
+            ))],
+            "The reviewed patch could not be safely revalidated. Aborting without modifying disk."
+                .to_string(),
+        )
+    })?;
+    let mut drift = Vec::new();
+    for plan in plans {
+        let target_path = match is_safe_path(base_dir, &plan.block.file_path) {
+            Ok(path) => path,
+            Err(error) => {
+                drift.push(ApplyResult::SecurityError(error));
+                continue;
+            }
+        };
+        if target_path != plan.target_path {
+            drift.push(ApplyResult::SourceChanged(plan.block.file_path.clone()));
+            continue;
         }
-        return Ok(results);
+        if let Err(error) =
+            validate_existing_ancestor(&canonical_base, &target_path, &plan.block.file_path)
+        {
+            drift.push(ApplyResult::SecurityError(error));
+            continue;
+        }
+        let unchanged = match &plan.original_content {
+            Some(expected) => fs::read_to_string(&plan.target_path)
+                .map(|current| current == *expected)
+                .unwrap_or(false),
+            None => !plan.target_path.exists(),
+        };
+        if !unchanged {
+            drift.push(ApplyResult::SourceChanged(plan.block.file_path.clone()));
+        }
     }
+    if !drift.is_empty() {
+        return Err((
+            drift,
+            "The workspace or a target path changed after this patch was reviewed. Refusing to write; review a fresh plan."
+                .to_string(),
+        ));
+    }
+
+    let mut results = Vec::new();
 
     // Record patch backup snapshot for Time Machine
     let backup_records: Vec<BackupFileRecord> = plans
         .iter()
         .map(|p| BackupFileRecord {
             relative_path: p.block.file_path.clone(),
-            original_content: fs::read_to_string(&p.target_path).ok(),
+            original_content: p.original_content.clone(),
+            applied_content: Some(p.new_content.clone()),
             is_new_file: p.is_new_file,
         })
         .collect();
@@ -386,13 +435,28 @@ pub fn apply_blocks_transactional(
         }
 
         if plan.is_new_file {
-            results.push(ApplyResult::Created(plan.block.file_path));
+            results.push(ApplyResult::Created(plan.block.file_path.clone()));
         } else {
-            results.push(ApplyResult::Updated(plan.block.file_path));
+            results.push(ApplyResult::Updated(plan.block.file_path.clone()));
         }
     }
 
     Ok(results)
+}
+
+pub fn apply_blocks_transactional(
+    base_dir: &Path,
+    blocks: &[PatchBlock],
+    dry_run: bool,
+) -> Result<Vec<ApplyResult>, (Vec<ApplyResult>, String)> {
+    let plans = plan_blocks_transactional(base_dir, blocks)?;
+    if dry_run {
+        return Ok(plans
+            .into_iter()
+            .map(|plan| ApplyResult::DryRunSimulated(plan.block.file_path))
+            .collect());
+    }
+    apply_planned_transactional(base_dir, &plans)
 }
 
 #[cfg(test)]
@@ -472,6 +536,53 @@ mod tests {
         assert_eq!(res[0], ApplyResult::DryRunSimulated("f1.txt".to_string()));
         // Verify file was NOT modified during dry run
         assert_eq!(fs::read_to_string(&file1).unwrap(), "foo\n");
+    }
+
+    #[test]
+    fn reviewed_plan_refuses_source_drift_before_writing() {
+        use_scratch_home();
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("code.rs");
+        fs::write(&file, "old\n").unwrap();
+        let blocks = vec![PatchBlock {
+            file_path: "code.rs".to_string(),
+            search: "old".to_string(),
+            replace: "planned".to_string(),
+        }];
+
+        let plans = plan_blocks_transactional(dir.path(), &blocks).unwrap();
+        fs::write(&file, "newer user work\n").unwrap();
+        let error = apply_planned_transactional(dir.path(), &plans).unwrap_err();
+
+        assert!(matches!(
+            error.0.as_slice(),
+            [ApplyResult::SourceChanged(path)] if path == "code.rs"
+        ));
+        assert_eq!(fs::read_to_string(file).unwrap(), "newer user work\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reviewed_new_file_plan_rechecks_a_replaced_parent() {
+        use std::os::unix::fs::symlink;
+
+        use_scratch_home();
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir(workspace.path().join("parent")).unwrap();
+        let blocks = vec![PatchBlock {
+            file_path: "parent/new.txt".to_string(),
+            search: String::new(),
+            replace: "planned".to_string(),
+        }];
+
+        let plans = plan_blocks_transactional(workspace.path(), &blocks).unwrap();
+        fs::remove_dir(workspace.path().join("parent")).unwrap();
+        symlink(outside.path(), workspace.path().join("parent")).unwrap();
+        let result = apply_planned_transactional(workspace.path(), &plans);
+
+        assert!(result.is_err());
+        assert!(!outside.path().join("new.txt").exists());
     }
 
     #[test]

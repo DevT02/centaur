@@ -3,10 +3,14 @@ use crate::export;
 use crate::git::{ExportMode, get_changed_files, is_git_repo};
 use crate::history::PatchSessionRecord;
 use crate::pack::PackOptions;
-use crate::patch::{ApplyResult, apply_blocks_transactional};
+use crate::patch::{
+    ApplyResult, apply_blocks_transactional, apply_planned_transactional, plan_blocks_transactional,
+};
 use crate::prompt::handle_prompt_edit;
 use crate::secrets::scan_file_for_secrets;
-use crate::{PatchBlock, parse_blocks, summarize_patch_blocks};
+use crate::{
+    PatchBlock, PatchPayload, parse_patch_payload, render_patch_plan, summarize_patch_blocks,
+};
 use arboard::Clipboard;
 use colored::*;
 use inquire::ui::{Attributes, Color, RenderConfig, StyleSheet};
@@ -90,47 +94,33 @@ pub fn render_workspace_dashboard() {
         .ok()
         .and_then(|mut cb| cb.get_text().ok())
         .unwrap_or_default();
-    let clip_blocks = parse_blocks(&clip_text);
     let search_markers = crate::count_search_markers(&clip_text);
 
-    if !clip_blocks.is_empty() {
+    if let Ok(PatchPayload::Blocks(clip_blocks)) = parse_patch_payload(&clip_text) {
         let targets: Vec<String> = clip_blocks.iter().map(|b| b.file_path.clone()).collect();
-        let targets_str = targets.join(", ");
         let clip_msg = format!(
             "⚡ Edits Ready: {} block(s) for ({})",
             clip_blocks.len(),
-            targets_str
+            targets.join(", ")
         );
-        println!(
-            "{}  {}",
-            "│".bright_cyan(),
-            clip_msg.bright_green().bold()
-        );
+        println!("{}  {}", "│".bright_cyan(), clip_msg.bright_green().bold());
+    } else if clip_text.trim() == "NO_CHANGES" {
+        let clip_msg = "📋 Clipboard  : NO_CHANGES — nothing to apply";
+        println!("{}  {}", "│".bright_cyan(), clip_msg.bright_green().bold());
     } else if search_markers > 0 {
         // Has SEARCH markers but failed to parse — malformed delimiters
         let clip_msg = format!(
             "📋 Clipboard  : {} patch marker(s) found but could not be parsed — check delimiters",
             search_markers
         );
-        println!(
-            "{}  {}",
-            "│".bright_cyan(),
-            clip_msg.bright_yellow().bold()
-        );
+        println!("{}  {}", "│".bright_cyan(), clip_msg.bright_yellow().bold());
     } else if clip_text.trim().is_empty() {
         let clip_msg = "📋 Clipboard  : Empty — copy the AI's complete response first";
-        println!(
-            "{}  {}",
-            "│".bright_cyan(),
-            clip_msg.dimmed()
-        );
+        println!("{}  {}", "│".bright_cyan(), clip_msg.dimmed());
     } else {
-        let clip_msg = "📋 Clipboard  : Text copied, but no patch found — copy the complete AI response";
-        println!(
-            "{}  {}",
-            "│".bright_cyan(),
-            clip_msg.dimmed()
-        );
+        let clip_msg =
+            "📋 Clipboard  : Text copied, but no patch found — copy the complete AI response";
+        println!("{}  {}", "│".bright_cyan(), clip_msg.dimmed());
     }
 
     println!(
@@ -149,24 +139,6 @@ fn get_git_branch(root: &PathBuf) -> String {
     match output {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         _ => "unknown".to_string(),
-    }
-}
-
-/// Warn when the reply contained blocks the parser could not read, so a malformed
-/// delimiter does not quietly drop an edit the user believes was applied.
-fn warn_about_dropped_blocks(source: &str, parsed: usize) {
-    let markers = crate::count_search_markers(source);
-    if markers > parsed {
-        println!(
-            "   {}",
-            format!(
-                "⚠️  {} of {} block(s) could not be parsed and will be skipped — check the delimiter lines.",
-                markers - parsed,
-                markers
-            )
-            .bright_yellow()
-            .bold()
-        );
     }
 }
 
@@ -192,8 +164,8 @@ fn print_patch_plan(blocks: &[PatchBlock]) {
 fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
     let root_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    match apply_blocks_transactional(&root_dir, blocks, true) {
-        Ok(_) => {}
+    let plans = match plan_blocks_transactional(&root_dir, blocks) {
+        Ok(plans) => plans,
         Err((failures, msg)) => {
             println!(
                 "\n{}",
@@ -206,11 +178,12 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
             }
             return true;
         }
-    }
+    };
 
     print_patch_plan(blocks);
+    println!("\n{}", render_patch_plan(&plans));
 
-    let apply_now = Confirm::new("Apply this validated patch plan?")
+    let apply_now = Confirm::new("Apply exactly this patch?")
         .with_default(false)
         .with_render_config(configure_visual_theme())
         .prompt()
@@ -221,7 +194,7 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
         return false;
     }
 
-    match apply_blocks_transactional(&root_dir, blocks, false) {
+    match apply_planned_transactional(&root_dir, &plans) {
         Ok(results) => {
             let mut had_write_error = false;
             println!("\n{}", "✨ Patch results:".bright_green().bold());
@@ -367,36 +340,41 @@ pub fn run_interactive_hub() {
         .ok()
         .and_then(|mut cb| cb.get_text().ok())
         .unwrap_or_default();
-    let clip_blocks = parse_blocks(&clip_text);
+    match parse_patch_payload(&clip_text) {
+        Ok(PatchPayload::Blocks(clip_blocks)) => {
+            println!(
+                "   {}",
+                format!(
+                    "⚡ AI code edits detected: {} block(s). Review the validated plan below.",
+                    clip_blocks.len()
+                )
+                .bright_green()
+                .bold()
+            );
 
-    if !clip_blocks.is_empty() {
-        println!(
-            "   {}",
-            format!(
-                "⚡ AI code edits detected: {} block(s). Review the validated plan below.",
-                clip_blocks.len()
-            )
-            .bright_green()
-            .bold()
-        );
-        warn_about_dropped_blocks(&clip_text, clip_blocks.len());
-
-        if review_and_apply_blocks(&clip_blocks) {
-            return;
+            if review_and_apply_blocks(&clip_blocks) {
+                return;
+            }
         }
+        Ok(PatchPayload::NoChanges) => println!(
+            "   {}",
+            "The AI reported NO_CHANGES; the workspace is untouched."
+                .bright_green()
+                .bold()
+        ),
+        Err(error) if crate::count_search_markers(&clip_text) > 0 => println!(
+            "   {}",
+            format!("Clipboard patch rejected: {}", error)
+                .bright_red()
+                .bold()
+        ),
+        Err(_) => {}
     }
 
-    println!(
-        "{}",
-        "  Workflow: Export → AI → Review → Apply"
-            .dimmed()
-    );
+    println!("{}", "  Workflow: Export → AI → Review → Apply".dimmed());
     println!("{}", "  What do you want to do?".bright_white().bold());
 
-    let options: Vec<&str> = PRIMARY_MENU_ITEMS
-        .iter()
-        .map(|(_, label)| *label)
-        .collect();
+    let options: Vec<&str> = PRIMARY_MENU_ITEMS.iter().map(|(_, label)| *label).collect();
     let choice = Select::new("", options)
         .with_render_config(render_config)
         .with_page_size(PRIMARY_MENU_ITEMS.len())
@@ -473,30 +451,30 @@ pub fn run_apply_interactive() {
         .ok()
         .and_then(|mut cb| cb.get_text().ok())
         .unwrap_or_default();
-    let blocks = parse_blocks(&text);
-
-    if blocks.is_empty() {
-        println!(
+    match parse_patch_payload(&text) {
+        Ok(PatchPayload::Blocks(blocks)) => {
+            let _ = review_and_apply_blocks(&blocks);
+        }
+        Ok(PatchPayload::NoChanges) => println!(
             "{}",
-            "⚠️ No Search/Replace blocks found in the clipboard.".bright_yellow()
-        );
-        println!(
-            "{}",
-            "Copy the AI's complete response and try again, or save it to a file and run: centaur --file <path>"
-                .dimmed()
-        );
-        return;
+            "The AI reported NO_CHANGES; the workspace is untouched."
+                .bright_green()
+                .bold()
+        ),
+        Err(error) => {
+            println!("{}", format!("⚠️ {}", error).bright_yellow());
+            println!(
+                "{}",
+                "Copy the AI's complete response and try again, or save it to a file and run: centaur --file <path>"
+                    .dimmed()
+            );
+        }
     }
-
-    warn_about_dropped_blocks(&text, blocks.len());
-    let _ = review_and_apply_blocks(&blocks);
 }
 
-const EXPORT_TASK_GUIDANCE: &str =
-    "Describe the desired outcome, important constraints, and how success should be verified. Leave blank for a conservative correctness and security review.";
+const EXPORT_TASK_GUIDANCE: &str = "Describe the desired outcome, important constraints, and how success should be verified. Leave blank for a conservative correctness and security review.";
 const EXPORT_TASK_LABEL: &str = "What should the AI change or review?";
-const EXPORT_TASK_HELP: &str =
-    "Example: Simplify the export instructions, preserve existing CLI behavior, and add a focused regression test.";
+const EXPORT_TASK_HELP: &str = "Example: Simplify the export instructions, preserve existing CLI behavior, and add a focused regression test.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExportScopeChoice {
@@ -585,11 +563,13 @@ pub fn run_export_wizard() {
 
     let scopes = export_scope_options(is_git_repo(&root_dir));
     let scope_labels: Vec<&str> = scopes.iter().map(|(_, label)| *label).collect();
-    let scope_choice =
-        Select::new("Which files should be included in the export?", scope_labels)
-            .with_render_config(render_config)
-            .with_page_size(scopes.len())
-            .raw_prompt();
+    let scope_choice = Select::new(
+        "Which files should be included in the export?",
+        scope_labels,
+    )
+    .with_render_config(render_config)
+    .with_page_size(scopes.len())
+    .raw_prompt();
 
     let Ok(scope_choice) = scope_choice else {
         cancel_export();
@@ -740,7 +720,10 @@ pub fn run_export_wizard() {
         }
     }
 
-    println!("\n{}", "📋 --- NEXT: SEND TO THE AI ---".bright_cyan().bold());
+    println!(
+        "\n{}",
+        "📋 --- NEXT: SEND TO THE AI ---".bright_cyan().bold()
+    );
     if outcome.prompt_copied {
         println!("   1. Paste the prompt");
         println!("      Press Ctrl+V in ChatGPT or Claude.");
@@ -781,7 +764,10 @@ pub fn run_export_wizard() {
             );
         }
         println!("\n{}", "--- WHEN THE AI REPLIES ---".bright_cyan().bold());
-        println!("   {}. Copy the complete AI response", result.summary.total_batches + 2);
+        println!(
+            "   {}. Copy the complete AI response",
+            result.summary.total_batches + 2
+        );
         println!("      Include all Search/Replace code blocks in your copy.");
         println!("   {}. Run centaur again", result.summary.total_batches + 3);
         println!("      Review the proposed changes, then approve them.");
@@ -908,16 +894,37 @@ pub fn run_dry_run_interactive() {
             text = clip_text;
         }
     }
-    let blocks = parse_blocks(&text);
-    if blocks.is_empty() {
-        println!(
-            "{}",
-            "⚠️ No Search/Replace code blocks found in clipboard to preview.".bright_yellow()
-        );
-        return;
-    }
+    let blocks = match parse_patch_payload(&text) {
+        Ok(PatchPayload::Blocks(blocks)) => blocks,
+        Ok(PatchPayload::NoChanges) => {
+            println!(
+                "{}",
+                "The AI reported NO_CHANGES; there is nothing to preview."
+                    .bright_green()
+                    .bold()
+            );
+            return;
+        }
+        Err(error) => {
+            println!("{}", format!("⚠️ {}", error).bright_yellow());
+            return;
+        }
+    };
 
     let root_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match plan_blocks_transactional(&root_dir, &blocks) {
+        Ok(plans) => {
+            print_patch_plan(&blocks);
+            println!("\n{}", render_patch_plan(&plans));
+        }
+        Err((_, msg)) => {
+            println!(
+                "{}",
+                format!("❌ Match Preview Failed: {}", msg).bright_red()
+            );
+            return;
+        }
+    }
     match apply_blocks_transactional(&root_dir, &blocks, true) {
         Ok(results) => {
             println!("{}", "✨ Match Preview Successful:".bright_green().bold());
@@ -984,21 +991,14 @@ mod tests {
 
     #[test]
     fn primary_menu_focuses_on_the_everyday_workflow() {
-        let labels: Vec<&str> = PRIMARY_MENU_ITEMS
-            .iter()
-            .map(|(_, label)| *label)
-            .collect();
+        let labels: Vec<&str> = PRIMARY_MENU_ITEMS.iter().map(|(_, label)| *label).collect();
 
         assert_eq!(labels.len(), 5);
         assert!(labels[0].contains("START AI TASK"));
         assert!(labels[1].contains("APPLY AI PATCH"));
         assert!(labels[2].contains("UNDO LAST PATCH"));
         assert!(labels[3].contains("MORE TOOLS"));
-        assert!(
-            labels
-                .iter()
-                .all(|label| !label.contains("SECURITY AUDIT"))
-        );
+        assert!(labels.iter().all(|label| !label.contains("SECURITY AUDIT")));
     }
 
     #[test]

@@ -10,17 +10,17 @@
 
 ## What it does
 
-Centaur moves repository context into browser-based AI chats and brings proposed edits back as reviewed patches. It selects the files, copies a prompt, checks every Search/Replace block, shows the planned changes, and creates an undo snapshot before writing.
+Centaur gives AI chats workspace-scoped MCP tools for reading context, applying reviewed patches, and undoing them. It also retains the file-and-clipboard workflow for clients without MCP access.
 
 It is meant for developers who already use ChatGPT, Claude, Gemini, or another desktop or web client and do not want to give a remote model shell access. Centaur can also run as a workspace-scoped MCP server for clients that support local tools.
 
 ## Why use it?
 
 - The model receives source files and task instructions instead of a transcript full of shell output and tool calls.
-- Your shell stays local. Browser chats work from exported text files, while MCP clients can access only the workspace recorded during setup.
+- Your shell stays local. MCP clients can access only the workspace recorded during setup; remote HTTP is loopback-only and must sit behind authenticated HTTPS.
 - Centaur validates the full patch set before it writes any part of it. A missing or ambiguous Search block stops the apply.
 - `centaur install` configures supported MCP clients and installs their Centaur commands or skills.
-- Each successful apply records an undo snapshot for that workspace. Use `centaur undo` or `Ctrl+Alt+U` to restore it.
+- Each successful apply records a workspace-scoped undo snapshot. Undo refuses to overwrite files changed after that patch.
 
 ## Install
 
@@ -42,7 +42,8 @@ cargo install --path .
 
 | Client | Send context | Apply edits |
 | --- | --- | --- |
-| Browser chat (ChatGPT, Claude, or Gemini on the web) | Run `centaur --export` and attach the generated files | Copy the response and run `centaur --clipboard` |
+| ChatGPT on the web | Connect the local stdio server through Secure MCP Tunnel | Call `apply_patch` or `undo` |
+| Claude or Gemini on the web | Connect an authenticated HTTPS proxy to Centaur's HTTP endpoint | Call `apply_patch` or `undo` |
 | Desktop app with MCP support | Call `get_context` | Call `apply_patch` or `undo` |
 | VS Code | Read the active workspace | Press `Ctrl+Alt+V` or use the Centaur status-bar item |
 | Terminal-based agent or editor | Run the Centaur CLI directly | Run the Centaur CLI directly |
@@ -78,7 +79,24 @@ Running `centaur` opens the workspace menu. From there you can enter a task, cho
   <sub>Antigravity</sub>
 </p>
 
-### Browser workflow in ChatGPT
+### No-copy browser workflow
+
+ChatGPT can reach Centaur's existing stdio server through [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). Configure the tunnel's local command as:
+
+```sh
+centaur mcp serve --workspace /absolute/path/to/project
+```
+
+Claude custom connectors and Gemini Spark custom apps accept remote MCP URLs. Start Centaur's authenticated Streamable HTTP transport locally:
+
+```powershell
+$env:CENTAUR_MCP_TOKEN = "a-random-secret-with-at-least-32-characters"
+centaur mcp serve --workspace C:\absolute\path\to\project --http 127.0.0.1:3765
+```
+
+Put an OAuth-capable HTTPS tunnel or reverse proxy in front of `http://127.0.0.1:3765/mcp`, configure it to send `Authorization: Bearer <CENTAUR_MCP_TOKEN>` upstream, and add its public `/mcp` URL to the web client. Centaur refuses non-loopback HTTP bindings and unexpected browser `Origin` headers.
+
+### Legacy browser workflow
 
 1. Centaur copies the prompt after an export. Paste it into the chat, attach `centaur_context_part001.txt` and any additional parts, then send the message.
 
@@ -86,13 +104,13 @@ Running `centaur` opens the workspace menu. From there you can enter a task, cho
   <img src="docs/screenshots/chatgpt_step1_message_sent.png" alt="Centaur prompt pasted and file attached in ChatGPT" width="620" />
 </p>
 
-2. The model reads the exported files and replies with Search/Replace blocks.
+2. The model reads the exported files and replies with a Centaur patch payload, or exactly `NO_CHANGES` when no file edits are needed.
 
 <p align="center">
   <img src="docs/screenshots/chatgpt_step2_ai_thinking.png" alt="ChatGPT reading Centaur export and generating patches" width="620" />
 </p>
 
-3. Once the response is complete, copy it and run `centaur --clipboard`. Centaur validates the blocks and shows the diff before asking whether to apply it.
+3. Once the response is complete, copy it and run `centaur --clipboard`. Centaur validates the complete payload, shows the exact computed diff, and asks whether to apply it.
 
 <p align="center">
   <img src="docs/screenshots/chatgpt_step3_copy_response.png" alt="ChatGPT response complete with Copy response button" width="620" />
@@ -141,7 +159,7 @@ centaur --export --mode changed --task "Add keyboard navigation to the command m
 
 Centaur opens the export folder and copies the prompt. Paste it into the chat and attach every generated `centaur_context_part*.txt` file.
 
-When the AI replies with Search/Replace blocks, copy the response and run:
+When the AI replies with a Centaur patch payload, copy the response and run:
 
 ```sh
 # 2. Validate, preview, and apply the response.
@@ -149,6 +167,13 @@ centaur --clipboard
 
 # 3. Revert the latest applied patch if needed.
 centaur undo
+```
+
+For scripts, pipe one complete payload through standard input. Writes require the explicit `--yes` approval flag; omit it or use `--dry-run` to validate without writing.
+
+```sh
+generate-centaur-patch | centaur --stdin --dry-run
+generate-centaur-patch | centaur --stdin --yes
 ```
 
 ### Desktop apps and editors
@@ -193,14 +218,17 @@ centaur --export --mode changed --redact
 | `centaur --export [paths...]` | Create upload-ready context files and copy the workflow prompt |
 | `centaur --clipboard` | Read, preview, and apply patch blocks from the clipboard |
 | `centaur --file response.txt` | Read patch blocks from a file |
+| `centaur --stdin` | Read one complete patch payload from standard input |
+| `centaur --stdin --yes` | Apply piped input after validation without an interactive prompt |
 | `centaur --dry-run --clipboard` | Validate and preview clipboard patches without writing |
 | `centaur undo [session-id]` | Revert a patch session; defaults to the latest |
 | `centaur history` | Browse patch history for the current workspace |
 | `centaur audit` | Scan the workspace for likely leaked credentials |
 | `centaur prompt show\|copy\|edit\|reset` | Manage the workflow prompt templates |
 | `centaur config init\|path` | Create default config or print its location |
-| `centaur --llm auto --clipboard` | Let a local Ollama model repair malformed patch blocks as a fallback |
+| `centaur --llm auto --clipboard --yes` | Let a local Ollama model repair unmatched blocks, then validate and apply the result transactionally |
 | `centaur mcp install [--client <id>]` | Add Centaur to an MCP client configuration (`--client all` for all) |
+| `centaur mcp serve --workspace <path> --http 127.0.0.1:3765` | Serve authenticated Streamable HTTP using `CENTAUR_MCP_TOKEN` |
 | `centaur skill install [--client <id>]` | Install Centaur commands or skills (`--client all` for all) |
 
 Run `centaur --help` for every option and default.
@@ -267,9 +295,13 @@ Because the workspace is fixed at install time, a second project needs its own e
 centaur mcp install --client antigravity --workspace ~/code/api --name centaur-api
 ```
 
-### Clients this does not reach
+### Web clients
 
-ChatGPT on the web accepts only remote HTTPS servers, so a local one cannot reach it. The consumer Gemini app is the same: its MCP support runs through Google's developer tooling rather than the chat app. Use the clipboard workflow for those.
+- ChatGPT web: use OpenAI Secure MCP Tunnel with the stdio command above. The tunnel is outbound-only, so Centaur does not need a public listener.
+- Claude web: add the authenticated public `/mcp` URL under **Customize → Connectors**. [Claude's cloud must be able to reach that URL](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+- Gemini web: eligible Gemini Spark users can add the same URL under **Connected Apps → Custom apps for Spark**. [Gemini custom apps require a standard MCP server URL](https://support.google.com/gemini/answer/17209137).
+
+The HTTP server intentionally does not implement TLS or OAuth. A tunnel or reverse proxy owns that internet-facing security boundary and forwards an authenticated request to Centaur's loopback listener. Keep the clipboard workflow for accounts that do not have the required connector feature.
 
 Editors that already run shell commands do not need any of this. They can call the CLI directly.
 

@@ -1,8 +1,10 @@
 use arboard::Clipboard;
 use clap::{Parser, Subcommand};
+use inquire::Confirm;
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use sysinfo::System;
@@ -10,10 +12,14 @@ use the_clipboard_centaur::config::CentaurConfig;
 use the_clipboard_centaur::export;
 use the_clipboard_centaur::git::ExportMode;
 use the_clipboard_centaur::pack::PackOptions;
-use the_clipboard_centaur::parse_blocks;
-use the_clipboard_centaur::patch::{ApplyResult, apply_blocks_transactional};
+use the_clipboard_centaur::patch::{
+    ApplyResult, apply_blocks_transactional, apply_planned_transactional, plan_blocks_transactional,
+};
 use the_clipboard_centaur::prompt::{
     handle_prompt_copy, handle_prompt_edit, handle_prompt_reset, handle_prompt_show,
+};
+use the_clipboard_centaur::{
+    PatchPayload, parse_patch_payload, render_patch_plan, summarize_patch_blocks,
 };
 
 #[derive(Parser, Debug)]
@@ -28,12 +34,20 @@ struct Args {
     command: Option<Commands>,
 
     /// Read the patch text directly from the OS clipboard.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with_all = ["file", "stdin"])]
     clipboard: bool,
 
     /// Read the patch text from a specific file.
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with_all = ["clipboard", "stdin"])]
     file: Option<String>,
+
+    /// Read the patch payload from standard input.
+    #[arg(long, conflicts_with_all = ["clipboard", "file"])]
+    stdin: bool,
+
+    /// Apply a validated patch without an interactive confirmation.
+    #[arg(long)]
+    yes: bool,
 
     /// Fallback to a local LLM via Ollama if the deterministic patch fails. Use 'auto' for hardware recommendation.
     #[arg(short, long)]
@@ -172,11 +186,17 @@ enum McpAction {
         #[arg(long, default_value = "centaur")]
         name: String,
     },
-    /// Run the stdio server. Clients launch this themselves; you rarely run it by hand.
+    /// Run the MCP server over stdio, or Streamable HTTP with --http.
     Serve {
         /// Workspace the client may patch. Fixed here so the model cannot choose it.
         #[arg(long)]
         workspace: PathBuf,
+        /// Serve remote MCP on this loopback address, for example 127.0.0.1:3765.
+        #[arg(long)]
+        http: Option<SocketAddr>,
+        /// Allow an exact Origin header in HTTP mode. Repeat for multiple origins.
+        #[arg(long, requires = "http")]
+        allow_origin: Vec<String>,
     },
 }
 
@@ -242,13 +262,28 @@ fn resolve_auto_llm() -> String {
     model.to_string()
 }
 
-fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str) -> bool {
+fn repair_with_llm(
+    model: &str,
+    file_path_str: &str,
+    blocks: &[&the_clipboard_centaur::PatchBlock],
+) -> Result<String, String> {
     let file_path = Path::new(file_path_str);
-    let content = fs::read_to_string(file_path).unwrap_or_default();
+    let content = fs::read_to_string(file_path)
+        .map_err(|e| format!("Could not read {} for local repair: {}", file_path_str, e))?;
+    let diffs = blocks
+        .iter()
+        .map(|block| {
+            format!(
+                "<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE",
+                block.search, block.replace
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
 
     let prompt = format!(
-        "You are a local file-writing agent. Execute the diff and output the final complete updated file.\n\nThe Diffs:\n<<<<<<< SEARCH\n{}\n=======\n{}\n>>>>>>> REPLACE\n\nCurrent File Content:\n{}\n\nOutput the completely updated file now:",
-        search, replace, content
+        "Apply every supplied diff to the current file in memory. Output only the final complete file, with no Markdown fence or explanation.\n\nDiffs:\n{}\n\nCurrent File Content:\n{}\n\nFinal file:",
+        diffs, content
     );
 
     println!(
@@ -265,15 +300,13 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
     {
         Ok(c) => c,
         Err(e) => {
-            println!("❌ ERROR: Failed to execute Ollama ({})", e);
-            return false;
+            return Err(format!("Failed to execute Ollama: {}", e));
         }
     };
 
     if let Some(mut stdin) = child.stdin.take() {
         if let Err(e) = stdin.write_all(prompt.as_bytes()) {
-            println!("❌ ERROR writing to Ollama stdin: {}", e);
-            return false;
+            return Err(format!("Could not write to Ollama: {}", e));
         }
     }
 
@@ -293,25 +326,15 @@ fn apply_with_llm(model: &str, file_path_str: &str, search: &str, replace: &str)
                     }
                     result_text = lines.join("\n");
                 }
-                if let Err(e) = fs::write(file_path, result_text) {
-                    println!("❌ ERROR writing LLM output to {}: {}", file_path_str, e);
-                    false
-                } else {
-                    println!("✅ Successfully updated via Local LLM: {}", file_path_str);
-                    true
-                }
+                Ok(result_text)
             } else {
-                println!(
-                    "❌ ERROR: Ollama failed: {}",
+                Err(format!(
+                    "Ollama failed: {}",
                     String::from_utf8_lossy(&out.stderr)
-                );
-                false
+                ))
             }
         }
-        Err(e) => {
-            println!("❌ ERROR reading Ollama output: {}", e);
-            false
-        }
+        Err(e) => Err(format!("Could not read Ollama output: {}", e)),
     }
 }
 
@@ -339,6 +362,49 @@ fn generate_session_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("{:08x}", (nanos & 0xffff_ffff))
+}
+
+fn print_patch_plan(blocks: &[the_clipboard_centaur::PatchBlock]) {
+    println!("\nValidated patch plan:");
+    for summary in summarize_patch_blocks(blocks) {
+        let action = if summary.creates_file {
+            "create"
+        } else {
+            "update"
+        };
+        println!(
+            "  - {} {} ({} block(s), -{} +{} lines)",
+            action,
+            summary.file_path,
+            summary.block_count,
+            summary.removed_lines,
+            summary.added_lines
+        );
+    }
+}
+
+fn report_apply_results(results: Vec<ApplyResult>) -> ExitCode {
+    let mut io_failures = 0;
+    for result in results {
+        match result {
+            ApplyResult::Created(path) => println!("✅ Created new file: {}", path),
+            ApplyResult::Updated(path) => println!("✅ Successfully updated: {}", path),
+            ApplyResult::DryRunSimulated(path) => {
+                println!("🔍 [DRY-RUN] Valid patch match for file: {}", path)
+            }
+            ApplyResult::IoError(path, error) => {
+                io_failures += 1;
+                eprintln!("❌ Could not write {}: {}", path, error);
+            }
+            _ => {}
+        }
+    }
+    if io_failures > 0 {
+        eprintln!("Run 'centaur undo latest' to revert any successful writes.");
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn main() -> ExitCode {
@@ -443,7 +509,26 @@ fn main() -> ExitCode {
                         )
                         .map(|report| println!("{}", report))
                     }
-                    McpAction::Serve { workspace } => the_clipboard_centaur::mcp::serve(&workspace),
+                    McpAction::Serve {
+                        workspace,
+                        http,
+                        allow_origin,
+                    } => match http {
+                        Some(bind) => env::var("CENTAUR_MCP_TOKEN")
+                            .map_err(|_| {
+                                "HTTP mode requires CENTAUR_MCP_TOKEN with at least 32 characters."
+                                    .to_string()
+                            })
+                            .and_then(|token| {
+                                the_clipboard_centaur::mcp::serve_http(
+                                    &workspace,
+                                    bind,
+                                    &token,
+                                    &allow_origin,
+                                )
+                            }),
+                        None => the_clipboard_centaur::mcp::serve(&workspace),
+                    },
                 };
                 match outcome {
                     Ok(()) => ExitCode::SUCCESS,
@@ -521,8 +606,10 @@ fn main() -> ExitCode {
     if args.export.is_none()
         && !args.clipboard
         && args.file.is_none()
+        && !args.stdin
         && !args.setup
         && !args.dry_run
+        && io::stdin().is_terminal()
     {
         // Zero-flag CLI invocation launch Interactive TUI Workspace Hub
         the_clipboard_centaur::ui::run_interactive_hub();
@@ -662,9 +749,7 @@ fn main() -> ExitCode {
         } else {
             println!(
                 "\n⚠️ Workflow prompt saved to {}.",
-                export_dir
-                    .join(export::PROMPT_FALLBACK_FILENAME)
-                    .display()
+                export_dir.join(export::PROMPT_FALLBACK_FILENAME).display()
             );
         }
 
@@ -682,7 +767,7 @@ fn main() -> ExitCode {
             println!("3. Send the message.");
 
             println!("\n--- WHEN THE AI REPLIES ---");
-            println!("4. Copy the complete AI response, including every Search/Replace block.");
+            println!("4. Copy the complete AI response (the Centaur patch payload).");
             println!("5. Run 'centaur' again, then review and approve the proposed changes.");
 
             if config.export.open_export_directory {
@@ -721,7 +806,7 @@ fn main() -> ExitCode {
 
             println!("\n--- WHEN THE AI REPLIES ---");
             println!(
-                "{}. Copy the complete AI response, including every Search/Replace block.",
+                "{}. Copy the complete AI response (the Centaur patch payload).",
                 result.summary.total_batches + 2
             );
             println!(
@@ -737,6 +822,7 @@ fn main() -> ExitCode {
     }
 
     // Default patch application flow
+    let input_from_stdin = args.stdin || (!args.clipboard && args.file.is_none());
     let input = if args.clipboard {
         println!("Reading patch instructions from the clipboard...");
         match Clipboard::new() {
@@ -746,9 +832,9 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-    } else if let Some(path) = args.file {
+    } else if let Some(path) = args.file.as_deref() {
         println!("Reading patch instructions from {}...", path);
-        match fs::read_to_string(&path) {
+        match fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) => {
                 // Previously unwrap_or_default(), which turned an unreadable file
@@ -758,99 +844,157 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        println!(
-            "Paste the output from ChatGPT below, then press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) to execute:\n"
-        );
+        if io::stdin().is_terminal() {
+            println!(
+                "Paste the AI patch payload below, then press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) to validate:\n"
+            );
+        }
         let mut text = String::new();
-        let _ = io::stdin().read_to_string(&mut text);
+        if let Err(e) = io::stdin().read_to_string(&mut text) {
+            eprintln!("Could not read patch payload from standard input: {}", e);
+            return ExitCode::FAILURE;
+        }
         text
     };
 
-    let blocks = parse_blocks(&input);
-    if blocks.is_empty() {
-        eprintln!("No valid Search/Replace blocks found in the input.");
-        return ExitCode::FAILURE;
-    }
-
-    let markers = the_clipboard_centaur::count_search_markers(&input);
-    if markers > blocks.len() {
-        eprintln!(
-            "⚠️  {} of {} Search/Replace blocks could not be parsed and will be skipped.",
-            markers - blocks.len(),
-            markers
-        );
-        eprintln!("   Check the delimiter lines (<<<<<<< SEARCH / ======= / >>>>>>> REPLACE).");
-    }
+    let blocks = match parse_patch_payload(&input) {
+        Ok(PatchPayload::NoChanges) => {
+            println!("No changes requested; the workspace was left untouched.");
+            return ExitCode::SUCCESS;
+        }
+        Ok(PatchPayload::Blocks(blocks)) => blocks,
+        Err(error) => {
+            eprintln!("{}", error);
+            return ExitCode::FAILURE;
+        }
+    };
 
     let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    if args.dry_run {
-        println!("🔍 Running in DRY-RUN mode. Simulating patch application...\n");
-    }
+    let tx_res = match plan_blocks_transactional(&current_dir, &blocks) {
+        Ok(plans) if args.dry_run => {
+            println!("🔍 Running in DRY-RUN mode. No files will be written.\n");
+            print_patch_plan(&blocks);
+            println!("\n{}", render_patch_plan(&plans));
+            apply_blocks_transactional(&current_dir, &blocks, true)
+        }
+        Ok(plans) => {
+            if !args.yes {
+                print_patch_plan(&blocks);
+                println!("\n{}", render_patch_plan(&plans));
+                if input_from_stdin || !io::stdin().is_terminal() {
+                    eprintln!(
+                        "Refusing to write without approval. Review the plan above, then re-run with --yes; use --dry-run for validation only."
+                    );
+                    return ExitCode::FAILURE;
+                }
 
-    let tx_res = apply_blocks_transactional(&current_dir, &blocks, args.dry_run);
-    match tx_res {
-        Ok(results) => {
-            let mut io_failures = 0;
-            for res in results {
-                match res {
-                    ApplyResult::Created(path) => println!("✅ Created new file: {}", path),
-                    ApplyResult::Updated(path) => println!("✅ Successfully updated: {}", path),
-                    ApplyResult::DryRunSimulated(path) => {
-                        println!("🔍 [DRY-RUN] Valid patch match for file: {}", path)
-                    }
-                    ApplyResult::IoError(path, err) => {
-                        io_failures += 1;
-                        eprintln!("❌ Could not write {}: {}", path, err);
-                    }
-                    _ => {}
+                let approved = Confirm::new("Apply exactly this patch?")
+                    .with_default(false)
+                    .prompt()
+                    .unwrap_or(false);
+                if !approved {
+                    println!("Patch was not applied.");
+                    return ExitCode::SUCCESS;
                 }
             }
-            if io_failures > 0 {
-                eprintln!("Run 'centaur undo latest' to revert any successful writes.");
-                return ExitCode::FAILURE;
-            }
-            ExitCode::SUCCESS
+            apply_planned_transactional(&current_dir, &plans)
         }
+        Err(error) => Err(error),
+    };
+    match tx_res {
+        Ok(results) => report_apply_results(results),
         Err((failures, msg)) => {
             eprintln!("❌ ERROR: {}", msg);
-            let resolved_llm = args.llm.map(|m| {
-                if m.eq_ignore_ascii_case("auto") {
-                    resolve_auto_llm()
-                } else {
-                    m
-                }
-            });
-            let mut recovered_all = resolved_llm.is_some();
+            let resolved_llm = args
+                .llm
+                .as_deref()
+                .filter(|_| args.yes && !args.dry_run)
+                .map(|model| {
+                    if model.eq_ignore_ascii_case("auto") {
+                        resolve_auto_llm()
+                    } else {
+                        model.to_string()
+                    }
+                });
+            if args.llm.is_some() && resolved_llm.is_none() && !args.dry_run {
+                eprintln!(
+                    "  - Local LLM repair was not run because non-interactive repair requires explicit --yes approval."
+                );
+            }
 
-            for fail in failures {
-                match fail {
+            let mut repair_paths = Vec::new();
+            let mut repairable = true;
+            for failure in &failures {
+                match failure {
                     ApplyResult::AmbiguousMatch(path) | ApplyResult::MatchNotFound(path) => {
                         eprintln!("  - Could not match cleanly in {}", path);
-                        match (&resolved_llm, blocks.iter().find(|b| b.file_path == path)) {
-                            (Some(model), Some(b)) => {
-                                recovered_all &=
-                                    apply_with_llm(model, &path, &b.search, &b.replace);
-                            }
-                            _ => recovered_all = false,
+                        if !repair_paths.contains(path) {
+                            repair_paths.push(path.clone());
                         }
                     }
-                    ApplyResult::SecurityError(err) => {
-                        eprintln!("  - Security violation: {}", err);
-                        recovered_all = false;
+                    ApplyResult::SecurityError(error) => {
+                        eprintln!("  - Security violation: {}", error);
+                        repairable = false;
                     }
-                    ApplyResult::IoError(path, err) => {
-                        eprintln!("  - IO Error on {}: {}", path, err);
-                        recovered_all = false;
+                    ApplyResult::IoError(path, error) => {
+                        eprintln!("  - IO Error on {}: {}", path, error);
+                        repairable = false;
                     }
-                    _ => {}
+                    ApplyResult::SourceChanged(path) => {
+                        eprintln!("  - Source changed after review: {}", path);
+                        repairable = false;
+                    }
+                    _ => repairable = false,
                 }
             }
 
-            if recovered_all {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
+            let Some(model) = resolved_llm.filter(|_| repairable) else {
+                return ExitCode::FAILURE;
+            };
+            let mut repaired_blocks: Vec<_> = blocks
+                .iter()
+                .filter(|block| !repair_paths.contains(&block.file_path))
+                .cloned()
+                .collect();
+            for path in repair_paths {
+                let current = match fs::read_to_string(&path) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        eprintln!("  - Could not read {} for local repair: {}", path, error);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let path_blocks: Vec<_> = blocks
+                    .iter()
+                    .filter(|block| block.file_path == path)
+                    .collect();
+                let replacement = match repair_with_llm(&model, &path, &path_blocks) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        eprintln!("  - Local repair failed for {}: {}", path, error);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                repaired_blocks.push(the_clipboard_centaur::PatchBlock {
+                    file_path: path,
+                    search: current.trim_start_matches('\u{FEFF}').to_string(),
+                    replace: replacement,
+                });
+            }
+
+            match apply_blocks_transactional(&current_dir, &repaired_blocks, false) {
+                Ok(results) => {
+                    println!("Local LLM repair validated transactionally; undo snapshot recorded.");
+                    report_apply_results(results)
+                }
+                Err((repair_failures, repair_message)) => {
+                    eprintln!("❌ Local repair was not applied: {}", repair_message);
+                    for failure in repair_failures {
+                        eprintln!("  - {:?}", failure);
+                    }
+                    ExitCode::FAILURE
+                }
             }
         }
     }

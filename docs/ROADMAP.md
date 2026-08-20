@@ -8,16 +8,18 @@ backlog are maintained in [USER_WORKFLOWS.md](USER_WORKFLOWS.md).
 ## Shipped foundation
 
 - **Unified 1-Step Setup (`centaur install`)**: Auto-configures MCP servers and GUI slash commands across Antigravity, Claude, ChatGPT, Cursor, Windsurf, VS Code, and Gemini CLI.
+- **No-Copy Web MCP**: Authenticated loopback Streamable HTTP for remote connectors, with the existing stdio server compatible with private MCP tunnels.
 - **System Doctor (`centaur doctor`)**: Comprehensive diagnostic command checking workspace canonical paths, Git state, storage permissions, clipboard availability, and client MCP configurations.
 - **VS Code Extension (`editors/vscode`)**: 1-click status bar button and global `Ctrl+Alt+V` keyboard shortcut for applying patches directly within VS Code.
 - **Transactional Safety & Redaction**: Strict path containment, pre-write validation, workspace-scoped undo snapshots, and export credential redaction.
-- **Locked Test Suite**: Cross-platform test suite passing 35/35 unit and integration tests.
+- **Trustworthy Patch Review**: Complete-payload parsing, successful `NO_CHANGES` handling, exact diff approval, source-drift rejection, drift-safe undo, and first-class standard input.
+- **Locked Test Suite**: Cross-platform unit and integration coverage gated by `cargo test --all-targets --locked`.
 
 ## Active Priorities
 
 ### 1. JSON & Machine-Readable Output (`--format json`)
 
-Add `--format json` flag to `centaur --export`, `centaur --clipboard`, `centaur audit`, and `centaur doctor`. Pairs with a non-interactive `--yes` flag to allow seamless programmatic composition by third-party agents and editor extensions without parsing terminal UI text.
+Add `--format json` to `centaur --export`, patch application, `centaur audit`, and `centaur doctor`. The shipped `--stdin` and `--yes` flags already provide explicit non-interactive input and approval; JSON completes the stable operation contract without requiring third-party tools to parse terminal text.
 
 ### 2. Multi-Line & Indentation-Resilient Patch Matching
 
