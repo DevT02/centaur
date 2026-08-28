@@ -788,32 +788,36 @@ pub fn run_export_wizard() {
 }
 
 pub fn open_directory(dir: &std::path::Path) {
-    let primary_target = dir.join("centaur_context_part001.txt");
-    let batch_target = dir.join("batch_01");
+    // Only Windows and macOS can reveal a specific file inside the folder.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let primary_target = dir.join("centaur_context_part001.txt");
+        let batch_target = dir.join("batch_01");
 
-    let target_file = if primary_target.exists() {
-        Some(primary_target)
-    } else if batch_target.exists() {
-        Some(batch_target)
-    } else {
-        None
-    };
+        let target_file = if primary_target.exists() {
+            Some(primary_target)
+        } else if batch_target.exists() {
+            Some(batch_target)
+        } else {
+            None
+        };
 
-    if let Some(target) = target_file {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = std::process::Command::new("explorer")
-                .arg(format!("/select,{}", target.display()))
-                .spawn();
-            return;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let _ = std::process::Command::new("open")
-                .arg("-R")
-                .arg(&target)
-                .spawn();
-            return;
+        if let Some(target) = target_file {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", target.display()))
+                    .spawn();
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open")
+                    .arg("-R")
+                    .arg(&target)
+                    .spawn();
+                return;
+            }
         }
     }
 

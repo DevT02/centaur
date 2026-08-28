@@ -57,6 +57,15 @@ cargo test --all-targets --locked
 
 Do not mix a repository-wide formatting rewrite into an unrelated behavior change.
 
+Those checks only see your own platform. Code behind `#[cfg(target_os = ...)]` can
+compile clean locally and fail on another runner, so if you touch a platform-gated
+path, check the other targets before pushing:
+
+```sh
+rustup target add x86_64-unknown-linux-gnu
+cargo clippy --all-targets --all-features --locked --target x86_64-unknown-linux-gnu -- -D warnings
+```
+
 ## Documentation and screenshots
 
 - Prefer commands that a reader can paste and run.
