@@ -6,6 +6,10 @@ The README visuals should show real product behavior, stay readable at GitHub's 
 
 `workflow.html` is the source for `../screenshots/workflow_overview.png`.
 
+It uses the project palette and carries a copy of the centaur from `centaur_logo.svg`
+inline, so the page needs no network and no build step. If the logo art changes, that
+copy has to be updated by hand.
+
 1. Open `workflow.html` in Chromium.
 2. Set the viewport width to 1160 at device scale 2, so the capture survives being
    displayed at the 900 pixel width the README uses.
