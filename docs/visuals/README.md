@@ -7,9 +7,11 @@ The README visuals should show real product behavior, stay readable at GitHub's 
 `workflow.html` is the source for `../screenshots/workflow_overview.png`.
 
 1. Open `workflow.html` in Chromium.
-2. Set the viewport to 1600 by 900 at device scale 1.
+2. Set the viewport width to 1160 at device scale 2, so the capture survives being
+   displayed at the 900 pixel width the README uses.
 3. Capture the full page as `docs/screenshots/workflow_overview.png`.
-4. Confirm every label is readable when the image is displayed at 900 pixels wide.
+4. Confirm no label overlaps the trust boundary or a connector, and that every
+   label is readable at 900 pixels wide.
 
 The source has no network dependencies, so a contributor can reproduce the image offline.
 

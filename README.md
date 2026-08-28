@@ -49,7 +49,7 @@ cargo install --path .
 | Terminal-based agent or editor | Run the Centaur CLI directly | Run the Centaur CLI directly |
 
 <p align="center">
-  <img src="docs/screenshots/workflow_overview.png" alt="Centaur workflow from context selection through validation, approval, and undo" width="900" />
+  <img src="docs/screenshots/workflow_overview.png" alt="Flowchart: your repository, the context you scope, the assistant across a trust boundary, Centaur validating every block, and either your approval and a snapshotted write or nothing written at all" width="900" />
 </p>
 
 ## What it looks like
