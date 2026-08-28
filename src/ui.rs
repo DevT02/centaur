@@ -889,10 +889,10 @@ pub fn run_dry_run_interactive() {
     println!();
 
     let mut text = String::new();
-    if let Ok(mut cb) = Clipboard::new() {
-        if let Ok(clip_text) = cb.get_text() {
-            text = clip_text;
-        }
+    if let Ok(mut cb) = Clipboard::new()
+        && let Ok(clip_text) = cb.get_text()
+    {
+        text = clip_text;
     }
     let blocks = match parse_patch_payload(&text) {
         Ok(PatchPayload::Blocks(blocks)) => blocks,
@@ -953,10 +953,10 @@ pub fn run_security_audit() -> usize {
 
     for entry in crate::pack::walk_workspace(&root_dir).flatten() {
         let p = entry.path();
-        if p.is_file() {
-            if let Ok(content) = fs::read_to_string(p) {
-                found.extend(scan_file_for_secrets(p, &content));
-            }
+        if p.is_file()
+            && let Ok(content) = fs::read_to_string(p)
+        {
+            found.extend(scan_file_for_secrets(p, &content));
         }
     }
 

@@ -31,17 +31,15 @@ pub fn is_safe_path(base_dir: &Path, rel_path_str: &str) -> Result<PathBuf, Stri
         return Err(format!("Absolute paths are forbidden: {}", rel_path_str));
     }
     let combined = base_dir.join(p);
-    if combined.exists() {
-        if let (Ok(canon_base), Ok(canon_combined)) =
+    if combined.exists()
+        && let (Ok(canon_base), Ok(canon_combined)) =
             (base_dir.canonicalize(), combined.canonicalize())
-        {
-            if !canon_combined.starts_with(&canon_base) {
-                return Err(format!(
-                    "Security Violation: Symlink points outside root ({})",
-                    rel_path_str
-                ));
-            }
-        }
+        && !canon_combined.starts_with(&canon_base)
+    {
+        return Err(format!(
+            "Security Violation: Symlink points outside root ({})",
+            rel_path_str
+        ));
     }
     Ok(combined)
 }
@@ -402,14 +400,14 @@ pub fn apply_planned_transactional(
 
     // Execute atomic writes
     for plan in plans {
-        if let Some(parent) = plan.target_path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                results.push(ApplyResult::IoError(
-                    plan.block.file_path.clone(),
-                    e.to_string(),
-                ));
-                continue;
-            }
+        if let Some(parent) = plan.target_path.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            results.push(ApplyResult::IoError(
+                plan.block.file_path.clone(),
+                e.to_string(),
+            ));
+            continue;
         }
 
         let temp_path = plan.target_path.with_extension("centaur_tmp");

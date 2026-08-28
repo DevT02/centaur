@@ -161,21 +161,18 @@ pub fn cleanup_stale_exports(max_age_secs: u64) -> usize {
     if let Ok(entries) = std::fs::read_dir(&temp) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("centaur_export_") {
-                        if let Ok(metadata) = entry.metadata() {
-                            if let Ok(modified) = metadata.modified() {
-                                if let Ok(elapsed) = modified.elapsed() {
-                                    if elapsed.as_secs() > max_age_secs {
-                                        let _ = std::fs::remove_dir_all(&path);
-                                        count += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("centaur_export_"))
+                && let Ok(metadata) = entry.metadata()
+                && let Ok(modified) = metadata.modified()
+                && let Ok(elapsed) = modified.elapsed()
+                && elapsed.as_secs() > max_age_secs
+            {
+                let _ = std::fs::remove_dir_all(&path);
+                count += 1;
             }
         }
     }

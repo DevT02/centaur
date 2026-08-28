@@ -160,7 +160,7 @@ pub fn is_repetitive_or_generated(path: &Path, content: &str) -> bool {
     // If large and has high line repetition or extremely long single lines
     if content.len() > 100_000 {
         let lines: Vec<&str> = content.lines().collect();
-        if lines.len() > 0 {
+        if !lines.is_empty() {
             let sample = &lines[..lines.len().min(100)];
             let unique_lines: HashSet<_> = sample.iter().collect();
             if unique_lines.len() < 5 {
@@ -224,16 +224,15 @@ pub fn pack_files_dynamic(
             continue;
         }
 
-        if !options.force {
-            if let Ok(meta) = path.metadata() {
-                if meta.len() > 2_000_000 {
-                    skipped_files.push(SkippedFile {
-                        path: rel_str,
-                        reason: format!("File exceeds 2MB limit ({} bytes)", meta.len()),
-                    });
-                    continue;
-                }
-            }
+        if !options.force
+            && let Ok(meta) = path.metadata()
+            && meta.len() > 2_000_000
+        {
+            skipped_files.push(SkippedFile {
+                path: rel_str,
+                reason: format!("File exceeds 2MB limit ({} bytes)", meta.len()),
+            });
+            continue;
         }
 
         let raw_content = match fs::read_to_string(path) {
@@ -296,7 +295,7 @@ pub fn pack_files_dynamic(
                 let lines: Vec<&str> = pf.content.lines().collect();
                 let total_lines = lines.len();
                 let chunk_line_count = 2000;
-                let segments = (total_lines + chunk_line_count - 1) / chunk_line_count;
+                let segments = total_lines.div_ceil(chunk_line_count);
                 for seg_idx in 0..segments {
                     let start_line = seg_idx * chunk_line_count;
                     let end_line = ((seg_idx + 1) * chunk_line_count).min(total_lines);

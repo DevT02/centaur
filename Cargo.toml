@@ -2,6 +2,7 @@
 name = "the-clipboard-centaur"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97.1"
 description = "A clipboard bridge between browser-based AI coding assistants and local repositories"
 repository = "https://github.com/DevT02/centaur"
 readme = "README.md"

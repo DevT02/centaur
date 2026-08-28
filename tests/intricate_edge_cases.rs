@@ -1,10 +1,10 @@
 use std::fs;
 use tempfile::tempdir;
 use the_clipboard_centaur::history::PatchSessionRecord;
-use the_clipboard_centaur::pack::{pack_files_dynamic, PackOptions};
+use the_clipboard_centaur::pack::{PackOptions, pack_files_dynamic};
 use the_clipboard_centaur::secrets::scan_file_for_secrets;
 use the_clipboard_centaur::{
-    apply_blocks_transactional, parse_blocks, summarize_patch_blocks, ApplyResult, PatchBlock,
+    ApplyResult, PatchBlock, apply_blocks_transactional, parse_blocks, summarize_patch_blocks,
 };
 
 /// Ensures patch history is stored in an isolated temporary directory during testing.
@@ -40,12 +40,22 @@ fn crlf_file_preserves_windows_newlines_when_patched_with_lf_search_block() {
     }];
 
     let res = apply_blocks_transactional(dir.path(), &blocks, false);
-    assert!(res.is_ok(), "Patch should apply cleanly with line-ending normalization: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Patch should apply cleanly with line-ending normalization: {:?}",
+        res
+    );
 
     let updated_content = fs::read_to_string(&file_path).unwrap();
     assert!(updated_content.contains("let val = 100;"));
-    assert!(updated_content.contains("\r\n"), "File on disk must preserve Windows CRLF newlines");
-    assert!(!updated_content.contains("\n\n"), "Should not introduce stray double newlines");
+    assert!(
+        updated_content.contains("\r\n"),
+        "File on disk must preserve Windows CRLF newlines"
+    );
+    assert!(
+        !updated_content.contains("\n\n"),
+        "Should not introduce stray double newlines"
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -60,7 +70,10 @@ fn utf8_bom_file_is_patched_successfully() {
 
     // File starts with UTF-8 BOM \u{FEFF}
     let bom_prefix = "\u{FEFF}";
-    let content = format!("{}pub fn hello() {{\n    println!(\"hello\");\n}}\n", bom_prefix);
+    let content = format!(
+        "{}pub fn hello() {{\n    println!(\"hello\");\n}}\n",
+        bom_prefix
+    );
     fs::write(&file_path, content).unwrap();
 
     let blocks = vec![PatchBlock {
@@ -70,7 +83,11 @@ fn utf8_bom_file_is_patched_successfully() {
     }];
 
     let res = apply_blocks_transactional(dir.path(), &blocks, false);
-    assert!(res.is_ok(), "BOM file should patch without error: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "BOM file should patch without error: {:?}",
+        res
+    );
 
     let patched = fs::read_to_string(&file_path).unwrap();
     assert!(patched.contains("hello world!"));
@@ -126,7 +143,11 @@ fn section_three() {
     assert_eq!(summary[0].block_count, 3);
 
     let res = apply_blocks_transactional(dir.path(), &blocks, false);
-    assert!(res.is_ok(), "Sequential multi-block patch must succeed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Sequential multi-block patch must succeed: {:?}",
+        res
+    );
 
     let final_content = fs::read_to_string(&file_path).unwrap();
     assert!(final_content.contains("let a = 100;"));
@@ -239,11 +260,18 @@ fn new_file_creation_automatically_creates_deep_nested_directories() {
     }];
 
     let res = apply_blocks_transactional(dir.path(), &blocks, false);
-    assert!(res.is_ok(), "Deep directory creation must succeed: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Deep directory creation must succeed: {:?}",
+        res
+    );
 
     let created_path = dir.path().join(deep_rel_path);
     assert!(created_path.exists(), "Created file must exist on disk");
-    assert_eq!(fs::read_to_string(created_path).unwrap(), "pub struct OAuth2Provider;\n");
+    assert_eq!(
+        fs::read_to_string(created_path).unwrap(),
+        "pub struct OAuth2Provider;\n"
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -257,25 +285,43 @@ fn secret_scanner_distinguishes_real_api_keys_from_false_positives() {
     // False Positive 1: CSS variable names
     let css_code = "let class_name = \"btn-primary-action-active-state\";";
     let warnings = scan_file_for_secrets(dummy_path, css_code);
-    assert!(warnings.is_empty(), "CSS class names should not trigger secret scanner");
+    assert!(
+        warnings.is_empty(),
+        "CSS class names should not trigger secret scanner"
+    );
 
     // False Positive 2: Documentation URL
     let doc_url = "// See https://github.com/settings/tokens for access configuration";
     let warnings = scan_file_for_secrets(dummy_path, doc_url);
-    assert!(warnings.is_empty(), "Documentation URLs should not trigger secret scanner");
+    assert!(
+        warnings.is_empty(),
+        "Documentation URLs should not trigger secret scanner"
+    );
 
     // False Positive 3: Standard env var lookup
     let env_lookup = "let key = std::env::var(\"AWS_SECRET_ACCESS_KEY\").unwrap_or_default();";
     let warnings = scan_file_for_secrets(dummy_path, env_lookup);
-    assert!(warnings.is_empty(), "Environment variable name references should not trigger scanner");
+    assert!(
+        warnings.is_empty(),
+        "Environment variable name references should not trigger scanner"
+    );
 
     // True Positive 1: OpenAI secret key format
-    let openai_key = format!("const OPENAI_KEY: &str = \"sk-proj-{}\";", "1234567890abcdef1234567890abcdef1234567890abcdef");
+    let openai_key = format!(
+        "const OPENAI_KEY: &str = \"sk-proj-{}\";",
+        "1234567890abcdef1234567890abcdef1234567890abcdef"
+    );
     let warnings = scan_file_for_secrets(dummy_path, &openai_key);
-    assert!(!warnings.is_empty(), "OpenAI secret key format must be detected");
+    assert!(
+        !warnings.is_empty(),
+        "OpenAI secret key format must be detected"
+    );
 
     // True Positive 2: GitHub Personal Access Token format
-    let github_pat = format!("let token = \"ghp_{}\";", "123456789012345678901234567890123456");
+    let github_pat = format!(
+        "let token = \"ghp_{}\";",
+        "123456789012345678901234567890123456"
+    );
     let warnings = scan_file_for_secrets(dummy_path, &github_pat);
     assert!(!warnings.is_empty(), "GitHub PAT must be detected");
 }
@@ -338,7 +384,11 @@ fn fuzzy_matcher_tolerates_slight_indentation_differences() {
     }];
 
     let res = apply_blocks_transactional(dir.path(), &blocks, false);
-    assert!(res.is_ok(), "Fuzzy matcher should handle minor indentation mismatches: {:?}", res);
+    assert!(
+        res.is_ok(),
+        "Fuzzy matcher should handle minor indentation mismatches: {:?}",
+        res
+    );
 
     let updated = fs::read_to_string(&file_path).unwrap();
     assert!(updated.contains("let val = 100;"));
@@ -385,7 +435,11 @@ fn session_undo_deletes_newly_created_files_and_restores_existing_files() {
 
     // Trigger Time Machine Undo
     let undo_res = PatchSessionRecord::revert_session(dir.path(), "latest");
-    assert!(undo_res.is_ok(), "Undo session must succeed: {:?}", undo_res);
+    assert!(
+        undo_res.is_ok(),
+        "Undo session must succeed: {:?}",
+        undo_res
+    );
 
     // Verify existing file is restored byte-for-byte
     assert_eq!(
@@ -395,7 +449,10 @@ fn session_undo_deletes_newly_created_files_and_restores_existing_files() {
     );
 
     // Verify newly created file is deleted from disk
-    assert!(!new_file.exists(), "Newly created file must be deleted upon session rollback");
+    assert!(
+        !new_file.exists(),
+        "Newly created file must be deleted upon session rollback"
+    );
 }
 
 // -----------------------------------------------------------------------------

@@ -1,10 +1,12 @@
+mod cli;
+
 use arboard::Clipboard;
-use clap::{Parser, Subcommand};
+use clap::Parser;
+use cli::{Args, Commands, ConfigAction, McpAction, PromptAction, SkillAction};
 use inquire::Confirm;
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use sysinfo::System;
@@ -21,208 +23,6 @@ use the_clipboard_centaur::prompt::{
 use the_clipboard_centaur::{
     PatchPayload, parse_patch_payload, render_patch_plan, summarize_patch_blocks,
 };
-
-#[derive(Parser, Debug)]
-#[command(
-    name = "The Clipboard Centaur",
-    version,
-    about = "Applies LLM-generated search/replace blocks directly to local files.",
-    long_about = "A fast, deterministic, and consumer-friendly CLI that parses search/replace blocks and exports context with session batching."
-)]
-struct Args {
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    /// Read the patch text directly from the OS clipboard.
-    #[arg(short, long, conflicts_with_all = ["file", "stdin"])]
-    clipboard: bool,
-
-    /// Read the patch text from a specific file.
-    #[arg(short, long, conflicts_with_all = ["clipboard", "stdin"])]
-    file: Option<String>,
-
-    /// Read the patch payload from standard input.
-    #[arg(long, conflicts_with_all = ["clipboard", "file"])]
-    stdin: bool,
-
-    /// Apply a validated patch without an interactive confirmation.
-    #[arg(long)]
-    yes: bool,
-
-    /// Fallback to a local LLM via Ollama if the deterministic patch fails. Use 'auto' for hardware recommendation.
-    #[arg(short, long)]
-    llm: Option<String>,
-
-    /// Export files/directories into single string/batches and copy prompt to clipboard.
-    #[arg(short, long, num_args = 0..)]
-    export: Option<Vec<String>>,
-
-    /// Context export mode: full, changed, staged, compact
-    #[arg(long, value_enum, default_value = "full")]
-    mode: ExportMode,
-
-    /// Feature task description to automatically insert into the workflow prompt
-    #[arg(long)]
-    task: Option<String>,
-
-    /// Maximum attachments generated for one upload message (default: 20)
-    #[arg(long)]
-    max_parts: Option<usize>,
-
-    /// Preferred maximum attachment size in characters (default: 5000000)
-    #[arg(long)]
-    max_part_chars: Option<usize>,
-
-    /// Model context token budget for warning alerts (default: 200000)
-    #[arg(long)]
-    context_tokens: Option<usize>,
-
-    /// Preview patch changes without modifying files
-    #[arg(long)]
-    dry_run: bool,
-
-    /// Run initial setup: environment verification & local model download
-    #[arg(long)]
-    setup: bool,
-
-    /// Bypass safety size limits for exports
-    #[arg(long)]
-    force: bool,
-
-    /// Strip detected credentials from the exported copy (the workspace is untouched)
-    #[arg(long)]
-    redact: bool,
-
-    /// Deprecated alias for --max-part-chars
-    #[arg(long)]
-    chunk_size: Option<usize>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Manage the Centaur workflow prompt template
-    Prompt {
-        #[command(subcommand)]
-        action: PromptAction,
-    },
-    /// Manage the Centaur config file
-    Config {
-        #[command(subcommand)]
-        action: ConfigAction,
-    },
-    /// Revert previous patch session
-    Undo {
-        /// Session ID to revert (default: latest)
-        #[arg(default_value = "latest")]
-        session_id: String,
-    },
-    /// View patch history timeline
-    History,
-    /// Launch the interactive terminal workspace hub
-    Ui,
-    /// Audit workspace for leaked credentials & API keys
-    Audit,
-    /// Auto-update Centaur binary to the latest version on PATH
-    Update,
-    /// Connect Centaur to a GUI client that speaks MCP
-    Mcp {
-        #[command(subcommand)]
-        action: McpAction,
-    },
-    /// Install the /centaur slash command in a GUI client
-    Skill {
-        #[command(subcommand)]
-        action: SkillAction,
-    },
-    /// Unified 1-step setup: Install MCP servers and slash commands across GUI clients
-    Install {
-        /// Client id (default: all). Pass 'all' or specific client like antigravity, claude, cursor
-        #[arg(long, default_value = "all")]
-        client: String,
-        /// Project workspace directory (default: current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Name for the entry and slash command (default: centaur)
-        #[arg(long, default_value = "centaur")]
-        name: String,
-    },
-    /// System diagnostics, environment health checks, and MCP client status
-    Doctor,
-}
-
-#[derive(Subcommand, Debug)]
-enum SkillAction {
-    /// Write the command file for a client. Omit --client to list clients.
-    Install {
-        /// Client id, for example antigravity, claude-code, cursor
-        #[arg(long)]
-        client: Option<String>,
-        /// Markdown file to write instead, for any client not listed
-        #[arg(long)]
-        output: Option<PathBuf>,
-        /// Project the command applies to, for clients that store it per project
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Name of the command, which is what you type after the slash
-        #[arg(long, default_value = "centaur")]
-        name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum McpAction {
-    /// Add Centaur to a client's MCP configuration. Omit --client to list clients.
-    Install {
-        /// Client id, for example claude-desktop, antigravity, cursor
-        #[arg(long)]
-        client: Option<String>,
-        /// Configuration file to edit instead, for any client not listed
-        #[arg(long)]
-        config: Option<PathBuf>,
-        /// Project the client may patch (default: current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-        /// Name for the entry in the client's configuration
-        #[arg(long, default_value = "centaur")]
-        name: String,
-    },
-    /// Run the MCP server over stdio, or Streamable HTTP with --http.
-    Serve {
-        /// Workspace the client may patch. Fixed here so the model cannot choose it.
-        #[arg(long)]
-        workspace: PathBuf,
-        /// Serve remote MCP on this loopback address, for example 127.0.0.1:3765.
-        #[arg(long)]
-        http: Option<SocketAddr>,
-        /// Allow an exact Origin header in HTTP mode. Repeat for multiple origins.
-        #[arg(long, requires = "http")]
-        allow_origin: Vec<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum PromptAction {
-    /// Display the current prompt templates
-    Show,
-    /// Copy the prompt template to clipboard
-    Copy,
-    /// Open a prompt template in your default editor ($VISUAL/$EDITOR, else Notepad/nano)
-    Edit {
-        /// Edit the single-upload template instead of the multi-batch one
-        #[arg(long)]
-        single: bool,
-    },
-    /// Reset both prompt templates to their defaults
-    Reset,
-}
-
-#[derive(Subcommand, Debug)]
-enum ConfigAction {
-    /// Write a config file containing the current defaults
-    Init,
-    /// Print the config file location
-    Path,
-}
 
 fn resolve_auto_llm() -> String {
     let mut sys = System::new_all();
@@ -304,10 +104,10 @@ fn repair_with_llm(
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(prompt.as_bytes()) {
-            return Err(format!("Could not write to Ollama: {}", e));
-        }
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(prompt.as_bytes())
+    {
+        return Err(format!("Could not write to Ollama: {}", e));
     }
 
     match child.wait_with_output() {
@@ -591,9 +391,13 @@ fn main() -> ExitCode {
                     }
                 }
             }
-            Commands::Doctor => {
+            Commands::Doctor { redact_paths } => {
                 let report = the_clipboard_centaur::doctor::diagnose(&current_dir);
-                print!("{}", report.render_human());
+                if redact_paths {
+                    print!("{}", report.render_human_redacted());
+                } else {
+                    print!("{}", report.render_human());
+                }
                 if report.summary_ok {
                     ExitCode::SUCCESS
                 } else {

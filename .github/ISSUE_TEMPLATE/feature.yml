@@ -1,0 +1,31 @@
+name: Feature proposal
+description: Propose a user-centered improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What is hard, slow, unsafe, or confusing today?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current workflow
+      description: Show the steps and where the problem occurs.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result without prescribing an implementation unless it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Safety and compatibility constraints
+      description: Note any effect on workspace scope, validation, undo, redaction, clients, or scripts.

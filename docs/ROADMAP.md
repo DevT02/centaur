@@ -13,7 +13,8 @@ backlog are maintained in [USER_WORKFLOWS.md](USER_WORKFLOWS.md).
 - **VS Code Extension (`editors/vscode`)**: 1-click status bar button and global `Ctrl+Alt+V` keyboard shortcut for applying patches directly within VS Code.
 - **Transactional Safety & Redaction**: Strict path containment, pre-write validation, workspace-scoped undo snapshots, and export credential redaction.
 - **Trustworthy Patch Review**: Complete-payload parsing, successful `NO_CHANGES` handling, exact diff approval, source-drift rejection, drift-safe undo, and first-class standard input.
-- **Locked Test Suite**: Cross-platform unit and integration coverage gated by `cargo test --all-targets --locked`.
+- **Contributor Quality Gate**: Cross-platform locked tests plus enforced Rustfmt and warning-free Clippy checks.
+- **Contributor Onboarding**: A runnable setup path, code and test map, issue forms, pull request checklist, security reporting path, and reproducible visual-source guidance.
 
 ## Active Priorities
 
@@ -28,11 +29,17 @@ Enhance the Search/Replace matcher to handle subtle line-wrapping, trailing whit
 ### 3. Prebuilt Multi-Platform Binary Releases
 
 Automate GitHub Actions release matrix for prebuilt binaries (Windows x86_64, macOS ARM64/x86_64, Linux x86_64) and package the VS Code extension for the Visual Studio Marketplace (`vsce package`).
+
+Before publishing a release:
+
+- Decide whether crates.io is a supported distribution channel; if it is, add an explicit Cargo package allowlist and verify the packaged README assets.
+- Enable GitHub private vulnerability reporting or replace the security-report link with another verified private channel.
+
 - Measure export time, attachment count, and parse success locally before optimizing; avoid telemetry by default.
 
 ## Decision rules
 
-- Prefer one source of truth: Clap for CLI metadata, shared export code for all front ends, and one documented test command.
+- Prefer one source of truth: `cli.rs` for Clap metadata, shared export code for all front ends, and one documented quality gate.
 - Keep cloud uploads user-driven unless a separate opt-in integration is explicitly designed.
 - Add dependencies only when the standard library or an existing crate cannot solve the measured problem cleanly.
 - Treat security, rollback, accessibility, and input validation as requirements, not optional polish.

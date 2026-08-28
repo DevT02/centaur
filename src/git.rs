@@ -30,31 +30,30 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
         .args(["status", "--porcelain", "-z", "--untracked-files=all"])
         .current_dir(root)
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut entries = stdout.split('\0');
-            while let Some(entry) = entries.next() {
-                let (status, path_str) = match (entry.get(..2), entry.get(3..)) {
-                    (Some(status), Some(path)) if !path.is_empty() => (status, path),
-                    _ => continue,
-                };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut entries = stdout.split('\0');
+        while let Some(entry) = entries.next() {
+            let (status, path_str) = match (entry.get(..2), entry.get(3..)) {
+                (Some(status), Some(path)) if !path.is_empty() => (status, path),
+                _ => continue,
+            };
 
-                // Renames and copies carry the source path as a second NUL-separated
-                // field; consume it so it is not parsed as its own entry.
-                if status.starts_with('R') || status.starts_with('C') {
-                    entries.next();
-                }
+            // Renames and copies carry the source path as a second NUL-separated
+            // field; consume it so it is not parsed as its own entry.
+            if status.starts_with('R') || status.starts_with('C') {
+                entries.next();
+            }
 
-                // A deleted path has nothing left to export.
-                if status.contains('D') {
-                    continue;
-                }
+            // A deleted path has nothing left to export.
+            if status.contains('D') {
+                continue;
+            }
 
-                let p = root.join(path_str);
-                if p.is_file() && !files.contains(&p) {
-                    files.push(p);
-                }
+            let p = root.join(path_str);
+            if p.is_file() && !files.contains(&p) {
+                files.push(p);
             }
         }
     }
@@ -84,16 +83,15 @@ pub fn get_staged_files(root: &Path) -> Vec<PathBuf> {
         .args(["diff", "--cached", "--name-only"])
         .current_dir(root)
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    let p = root.join(trimmed);
-                    if p.exists() && p.is_file() {
-                        files.push(p);
-                    }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                let p = root.join(trimmed);
+                if p.exists() && p.is_file() {
+                    files.push(p);
                 }
             }
         }

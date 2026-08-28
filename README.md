@@ -24,7 +24,7 @@ It is meant for developers who already use ChatGPT, Claude, Gemini, or another d
 
 ## Install
 
-Centaur requires the [current stable Rust toolchain](https://www.rust-lang.org/tools/install). Contributors using `rustup` automatically get the repository's tested toolchain.
+Centaur requires [Rust 1.97.1 or newer](https://www.rust-lang.org/tools/install). Contributors using `rustup` automatically get the repository's tested toolchain.
 
 ```sh
 cargo install --git https://github.com/DevT02/centaur.git --locked
@@ -49,17 +49,33 @@ cargo install --path .
 | Terminal-based agent or editor | Run the Centaur CLI directly | Run the Centaur CLI directly |
 
 <p align="center">
-  <img src="docs/screenshots/workflow_architecture.png" alt="Centaur Workflow Architecture Diagram" width="900" />
+  <img src="docs/screenshots/workflow_overview.png" alt="Centaur workflow from context selection through validation, approval, and undo" width="900" />
 </p>
 
 ## What it looks like
 
-### Interactive terminal
+### Export from the terminal
 
-Running `centaur` opens the workspace menu. From there you can enter a task, choose the export scope, and create the context files.
+Run one explicit command to package changed files and print every next step. Running `centaur` with no arguments opens the interactive workspace menu for the same workflow.
 
 <p align="center">
-  <img src="docs/screenshots/tui_export_workflow.png" alt="Centaur Interactive Terminal Export Workflow" width="760" />
+  <img src="docs/screenshots/cli_export_workflow.png" alt="Centaur changed-file export with upload and patch-response instructions" width="900" />
+</p>
+
+### Check setup without exposing local paths
+
+`centaur doctor --redact-paths` checks the workspace, storage, clipboard, and optional client integrations while replacing local paths with shareable labels.
+
+<p align="center">
+  <img src="docs/screenshots/cli_doctor.png" alt="Privacy-safe Centaur doctor output with core and optional checks" width="900" />
+</p>
+
+### Review the exact patch before writing
+
+Dry runs use the same parser and planner as a real apply, show the computed diff, and leave the workspace and undo history untouched.
+
+<p align="center">
+  <img src="docs/screenshots/cli_patch_review.png" alt="Centaur dry run showing a validated patch summary and exact diff" width="900" />
 </p>
 
 
@@ -212,7 +228,7 @@ centaur --export --mode changed --redact
 | Command | Action |
 | --- | --- |
 | `centaur install` | Configure supported MCP clients and install Centaur commands or skills |
-| `centaur doctor` | Check the installation, workspace, clipboard, and client integrations |
+| `centaur doctor [--redact-paths]` | Check core health and optional integrations; hide local paths for shareable output |
 | `centaur update` | Reinstall the latest version from the Centaur Git repository |
 | `centaur` / `centaur ui` | Open the interactive workspace terminal UI |
 | `centaur --export [paths...]` | Create upload-ready context files and copy the workflow prompt |
@@ -310,15 +326,18 @@ Editors that already run shell commands do not need any of this. They can call t
 - [Usage guide](https://github.com/DevT02/centaur/blob/master/docs/USAGE.md): recipes, configuration, prompt customization, and troubleshooting
 - [Architecture](https://github.com/DevT02/centaur/blob/master/docs/ARCHITECTURE.md): data flow, module map, and safety invariants
 - [Contributing](https://github.com/DevT02/centaur/blob/master/CONTRIBUTING.md): setup, checks, and pull request expectations
+- [Security policy](https://github.com/DevT02/centaur/blob/master/SECURITY.md): private vulnerability reporting and security scope
 - [Productivity roadmap](https://github.com/DevT02/centaur/blob/master/docs/ROADMAP.md): prioritized improvements for releases, automation, and AI-assisted development
 
 ## Development
 
 ```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked
 cargo run -- --help
 ```
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -78,22 +79,21 @@ impl PatchSessionRecord {
     pub fn list_sessions() -> Vec<PatchSessionRecord> {
         let dir = Self::history_dir();
         let mut sessions = Vec::new();
-        if dir.exists() {
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() && p.extension().map(|e| e == "json").unwrap_or(false) {
-                        if let Ok(content) = fs::read_to_string(&p) {
-                            if let Ok(record) = serde_json_from_str::<PatchSessionRecord>(&content)
-                            {
-                                sessions.push(record);
-                            }
-                        }
-                    }
+        if dir.exists()
+            && let Ok(entries) = fs::read_dir(dir)
+        {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file()
+                    && p.extension().is_some_and(|extension| extension == "json")
+                    && let Ok(content) = fs::read_to_string(&p)
+                    && let Ok(record) = serde_json_from_str::<PatchSessionRecord>(&content)
+                {
+                    sessions.push(record);
                 }
             }
         }
-        sessions.sort_by(|a, b| b.timestamp_secs.cmp(&a.timestamp_secs));
+        sessions.sort_by_key(|session| Reverse(session.timestamp_secs));
         sessions
     }
 

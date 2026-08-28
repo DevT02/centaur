@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centaur workflow overview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b10;
+      --panel: #121722;
+      --panel-2: #171e2b;
+      --line: #2b3547;
+      --text: #f4f7fb;
+      --muted: #aeb8c8;
+      --cyan: #57d6dd;
+      --cyan-soft: #16383f;
+      --gold: #f3bd62;
+      --green: #75daa2;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 1600px;
+      height: 900px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      padding: 58px 68px 52px;
+      background:
+        radial-gradient(circle at 78% 5%, rgba(87, 214, 221, 0.12), transparent 31%),
+        radial-gradient(circle at 8% 92%, rgba(243, 189, 98, 0.08), transparent 29%),
+        var(--bg);
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 48px;
+      margin-bottom: 38px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--cyan);
+      font: 700 15px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: 52px;
+      line-height: 1.04;
+      letter-spacing: -0.035em;
+    }
+
+    header p:last-child {
+      width: 370px;
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.45;
+    }
+
+    .entry-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-bottom: 26px;
+    }
+
+    .entry {
+      position: relative;
+      min-height: 134px;
+      padding: 23px 24px 22px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(23, 30, 43, 0.97), rgba(16, 21, 31, 0.97));
+    }
+
+    .entry::after {
+      position: absolute;
+      left: calc(50% - 1px);
+      bottom: -27px;
+      width: 2px;
+      height: 26px;
+      content: "";
+      background: var(--line);
+    }
+
+    .entry-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 13px;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 18px rgba(87, 214, 221, 0.6);
+    }
+
+    code {
+      color: var(--text);
+      font: 600 17px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .entry p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .core {
+      padding: 24px;
+      border: 1px solid #35606a;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(22, 56, 63, 0.74), rgba(18, 23, 34, 0.98) 25%);
+      box-shadow: 0 24px 75px rgba(0, 0, 0, 0.28);
+    }
+
+    .core-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 4px 19px;
+    }
+
+    .core-title h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.01em;
+    }
+
+    .scope {
+      padding: 7px 11px;
+      border: 1px solid rgba(117, 218, 162, 0.38);
+      border-radius: 999px;
+      color: var(--green);
+      background: rgba(117, 218, 162, 0.08);
+      font: 700 13px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 180px;
+      padding: 18px 17px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel-2);
+    }
+
+    .step:not(:last-child)::after {
+      position: absolute;
+      z-index: 2;
+      top: 82px;
+      right: -17px;
+      width: 20px;
+      color: var(--cyan);
+      content: "\2192";
+      font-size: 22px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .number {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      margin-bottom: 17px;
+      border: 1px solid rgba(87, 214, 221, 0.45);
+      border-radius: 10px;
+      place-items: center;
+      color: var(--cyan);
+      background: var(--cyan-soft);
+      font: 800 15px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
+    .step h3 {
+      margin: 0 0 9px;
+      font-size: 19px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.42;
+    }
+
+    footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 23px;
+      padding: 0 5px;
+    }
+
+    footer strong {
+      color: var(--gold);
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+
+    footer span {
+      color: var(--muted);
+      font: 600 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">The Clipboard Centaur workflow</p>
+      <h1>Your code stays local until you choose what to share.</h1>
+    </div>
+    <p>Three entry points feed the same validation, review, write, and recovery pipeline.</p>
+  </header>
+
+  <section class="entry-grid" aria-label="Workflow entry points">
+    <article class="entry">
+      <div class="entry-label"><span class="dot"></span>MCP-connected client</div>
+      <code>get_context(mode: "changed")</code>
+      <p>The client can read only the workspace fixed during setup.</p>
+    </article>
+    <article class="entry">
+      <div class="entry-label"><span class="dot"></span>Browser chat</div>
+      <code>centaur --export --mode changed</code>
+      <p>You decide which generated context files to upload.</p>
+    </article>
+    <article class="entry">
+      <div class="entry-label"><span class="dot"></span>CLI or editor</div>
+      <code>centaur --file response.txt</code>
+      <p>Clipboard, file, and stdin inputs use the same patch planner.</p>
+    </article>
+  </section>
+
+  <main class="core">
+    <div class="core-title">
+      <h2>One fail-closed safety core</h2>
+      <span class="scope">workspace-scoped</span>
+    </div>
+    <section class="steps" aria-label="Centaur safety pipeline">
+      <article class="step">
+        <div class="number">1</div>
+        <h3>Scope</h3>
+        <p>Select explicit files, Git changes, or a fixed MCP workspace.</p>
+      </article>
+      <article class="step">
+        <div class="number">2</div>
+        <h3>Propose</h3>
+        <p>The AI returns complete Search/Replace blocks, not shell commands.</p>
+      </article>
+      <article class="step">
+        <div class="number">3</div>
+        <h3>Validate</h3>
+        <p>Centaur checks every block, path, match, and exact resulting diff.</p>
+      </article>
+      <article class="step">
+        <div class="number">4</div>
+        <h3>Approve</h3>
+        <p>You confirm the reviewed plan before a snapshot and any file write.</p>
+      </article>
+      <article class="step">
+        <div class="number">5</div>
+        <h3>Recover</h3>
+        <p><code>centaur undo</code> refuses to overwrite later user changes.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <strong>No partial patch. No silent workspace escape. No write before review.</strong>
+    <span>local context in / reviewed changes out</span>
+  </footer>
+</body>
+</html>
