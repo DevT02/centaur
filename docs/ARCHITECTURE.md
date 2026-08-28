@@ -18,7 +18,7 @@ flowchart LR
 
 ## Export pipeline
 
-1. `main.rs` or `ui.rs` selects paths, an `ExportMode`, and limits.
+1. `main.rs` or `ui.rs` selects paths, an `ExportMode`, and limits. `cli.rs` is the source of truth for command-line metadata.
 2. `export::collect_files` resolves full, changed, staged, or compact scope.
 3. `export::scan_files` reports likely credentials; `--redact` creates sanitized temporary copies.
 4. `pack::pack_files_dynamic` orders files, omits unsupported data, splits oversized context, and builds the manifest.
@@ -49,7 +49,8 @@ flowchart LR
 
 | Module | Responsibility |
 | --- | --- |
-| `main.rs` | Clap arguments, subcommands, process exit behavior, and CLI orchestration |
+| `cli.rs` | Clap arguments, subcommands, help text, and parser consistency tests |
+| `main.rs` | Process exit behavior and CLI orchestration |
 | `ui.rs` | Interactive terminal dashboard and wizards |
 | `lib.rs` | Public API and tolerant response parser |
 | `export.rs` | Shared export orchestration and temporary redaction copies |
@@ -60,7 +61,8 @@ flowchart LR
 | `secrets.rs` | Credential-pattern detection and redaction |
 | `prompt.rs` | Default/custom prompt templates and placeholder rendering |
 | `config.rs` | Persistent export settings and `CENTAUR_HOME` |
-| `review.rs` | Per-file patch summaries |
+| `review.rs` | Per-file patch summaries and exact diff rendering |
+| `doctor.rs` | Core health checks and optional integration diagnostics |
 | `mcp.rs` | Shared MCP tools plus stdio and authenticated Streamable HTTP transports |
 
 ## Safety invariants

@@ -95,12 +95,11 @@ pub fn prompt_template_path() -> PathBuf {
 
 pub fn get_prompt_template() -> String {
     let path = prompt_template_path();
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if !content.trim().is_empty() {
-                return content;
-            }
-        }
+    if path.exists()
+        && let Ok(content) = fs::read_to_string(&path)
+        && !content.trim().is_empty()
+    {
+        return content;
     }
     DEFAULT_PROMPT_TEMPLATE.to_string()
 }
@@ -112,12 +111,11 @@ pub fn single_prompt_template_path() -> PathBuf {
 pub fn get_single_batch_prompt_template() -> String {
     // Check if user has a custom single-batch template saved
     let path = single_prompt_template_path();
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if !content.trim().is_empty() {
-                return content;
-            }
-        }
+    if path.exists()
+        && let Ok(content) = fs::read_to_string(&path)
+        && !content.trim().is_empty()
+    {
+        return content;
     }
     DEFAULT_PROMPT_TEMPLATE_SINGLE.to_string()
 }

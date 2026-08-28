@@ -788,32 +788,36 @@ pub fn run_export_wizard() {
 }
 
 pub fn open_directory(dir: &std::path::Path) {
-    let primary_target = dir.join("centaur_context_part001.txt");
-    let batch_target = dir.join("batch_01");
+    // Only Windows and macOS can reveal a specific file inside the folder.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let primary_target = dir.join("centaur_context_part001.txt");
+        let batch_target = dir.join("batch_01");
 
-    let target_file = if primary_target.exists() {
-        Some(primary_target)
-    } else if batch_target.exists() {
-        Some(batch_target)
-    } else {
-        None
-    };
+        let target_file = if primary_target.exists() {
+            Some(primary_target)
+        } else if batch_target.exists() {
+            Some(batch_target)
+        } else {
+            None
+        };
 
-    if let Some(target) = target_file {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = std::process::Command::new("explorer")
-                .arg(format!("/select,{}", target.display()))
-                .spawn();
-            return;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let _ = std::process::Command::new("open")
-                .arg("-R")
-                .arg(&target)
-                .spawn();
-            return;
+        if let Some(target) = target_file {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer")
+                    .arg(format!("/select,{}", target.display()))
+                    .spawn();
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open")
+                    .arg("-R")
+                    .arg(&target)
+                    .spawn();
+                return;
+            }
         }
     }
 
@@ -889,10 +893,10 @@ pub fn run_dry_run_interactive() {
     println!();
 
     let mut text = String::new();
-    if let Ok(mut cb) = Clipboard::new() {
-        if let Ok(clip_text) = cb.get_text() {
-            text = clip_text;
-        }
+    if let Ok(mut cb) = Clipboard::new()
+        && let Ok(clip_text) = cb.get_text()
+    {
+        text = clip_text;
     }
     let blocks = match parse_patch_payload(&text) {
         Ok(PatchPayload::Blocks(blocks)) => blocks,
@@ -953,10 +957,10 @@ pub fn run_security_audit() -> usize {
 
     for entry in crate::pack::walk_workspace(&root_dir).flatten() {
         let p = entry.path();
-        if p.is_file() {
-            if let Ok(content) = fs::read_to_string(p) {
-                found.extend(scan_file_for_secrets(p, &content));
-            }
+        if p.is_file()
+            && let Ok(content) = fs::read_to_string(p)
+        {
+            found.extend(scan_file_for_secrets(p, &content));
         }
     }
 

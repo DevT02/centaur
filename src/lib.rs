@@ -131,13 +131,12 @@ pub fn clean_patch_block(mut block: PatchBlock) -> Option<PatchBlock> {
     let mut path = block.file_path.trim().to_string();
 
     // Strip surrounding quotes or backticks
-    if (path.starts_with('`') && path.ends_with('`'))
+    if ((path.starts_with('`') && path.ends_with('`'))
         || (path.starts_with('"') && path.ends_with('"'))
-        || (path.starts_with('\'') && path.ends_with('\''))
+        || (path.starts_with('\'') && path.ends_with('\'')))
+        && path.len() >= 2
     {
-        if path.len() >= 2 {
-            path = path[1..path.len() - 1].trim().to_string();
-        }
+        path = path[1..path.len() - 1].trim().to_string();
     }
 
     // Strip leading ./ or .\ or / or \
@@ -217,9 +216,9 @@ fn parse_blocks_state_machine(text: &str) -> Vec<PatchBlock> {
 
     let mut state = State::LookingForFile;
     let lines = text.replace("\r\n", "\n");
-    let mut lines_iter = lines.split('\n').peekable();
+    let lines_iter = lines.split('\n');
 
-    while let Some(line) = lines_iter.next() {
+    for line in lines_iter {
         let trimmed = line.trim();
         match state {
             State::LookingForFile => {

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>How an AI edit reaches your files</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f5f0e6;
+      --ink: #0d1117;
+      --muted: #5f5849;
+      --gold: #8a6b18;
+      --rule: #ddd4c0;
+      --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+      --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 1160px;
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+
+    body { padding: 46px 40px 40px; }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      font-weight: 650;
+      letter-spacing: -0.021em;
+    }
+
+    .rule { width: 62px; height: 3px; margin: 15px 0 16px; background: #b08d33; }
+
+    .lede {
+      max-width: 780px;
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    svg { display: block; }
+
+    .note { max-width: 920px; margin: 16px 0 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    .note code { color: var(--ink); font-family: var(--mono); font-size: 14px; }
+
+    .ways {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 34px;
+      margin-top: 26px;
+      padding-top: 20px;
+      border-top: 1px solid var(--rule);
+    }
+
+    .ways h2 {
+      grid-column: 1 / -1;
+      margin: 0 0 -6px;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.005em;
+      color: var(--ink);
+    }
+
+    .ways code { display: block; margin-bottom: 6px; font-family: var(--mono); font-size: 15px; color: var(--ink); }
+    .ways p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+
+    .lg-gold { fill: #d0aa52; }
+    .lg-paper { fill: #f5f0e6; }
+    .lg-ink { fill: #0d1117; }
+    .lg-gold-line { fill: none; stroke: #d0aa52; stroke-linecap: round; stroke-linejoin: round; }
+    .lg-ink-line { fill: none; stroke: #0d1117; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+</head>
+<body>
+  <h1>How an AI edit reaches your files</h1>
+  <div class="rule"></div>
+  <p class="lede">Your repository stays on your machine. Only the context you scope leaves it, and nothing is written until every block in the reply has been checked and you have approved the result.</p>
+
+  <svg width="1080" height="536" viewBox="0 0 1080 536" role="img"
+       aria-label="Flowchart. Your repository feeds a scoping step, which sends only the context you chose across a boundary to the assistant. The assistant returns Search slash Replace blocks as text. Centaur checks every block. If any check fails, nothing is written, not even the blocks that parsed. If all checks pass, you approve, Centaur snapshots the files, and that write back to your repository is the only write to your source files.">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#0d1117"/>
+      </marker>
+      <marker id="arrow-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#b08d33"/>
+      </marker>
+      <marker id="arrow-stop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#9d3418"/>
+      </marker>
+    </defs>
+    <g font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+      <line x1="672" y1="24" x2="672" y2="516" stroke="#9a917c" stroke-width="1.5" stroke-dasharray="7 6"/>
+      <text x="656" y="20" text-anchor="end" font-size="15" fill="#5f5849">your machine</text>
+      <text x="688" y="20" font-size="15" fill="#5f5849">the assistant</text>
+      <rect x="16" y="56" width="220" height="84" rx="3" fill="#fdfbf4" stroke="#0d1117" stroke-width="1.4"/>
+      <g transform="translate(202,69)" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="5" width="12" height="15" rx="1.5"/><rect x="6.5" y="1.5" width="12" height="15" rx="1.5" fill="#fdfbf4"/></g>
+      <text x="34" y="90" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#0d1117">Your repository</text>
+      <text x="34" y="115" font-size="16" fill="#5f5849">files on disk, plus</text>
+      <text x="34" y="133" font-size="16" fill="#5f5849">whatever Git knows</text>
+      <line x1="236" y1="98" x2="292" y2="98" stroke="#0d1117" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <rect x="300" y="56" width="252" height="84" rx="3" fill="#fdfbf4" stroke="#0d1117" stroke-width="1.4"/>
+      <g transform="translate(518,69)" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 2.5H20L12.5 11.5V20L9 17.5V11.5Z"/></g>
+      <text x="318" y="90" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#0d1117">Scope what leaves</text>
+      <text x="318" y="115" font-size="16" fill="#5f5849">explicit files, changed files,</text>
+      <text x="318" y="133" font-size="16" fill="#5f5849">or the fixed MCP workspace</text>
+      <line x1="552" y1="98" x2="742" y2="98" stroke="#0d1117" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="647" y="86" text-anchor="middle" font-size="15" fill="#5f5849" paint-order="stroke" stroke="#f5f0e6" stroke-width="7">only what you scoped</text>
+      <rect x="750" y="56" width="314" height="84" rx="3" fill="#fdfbf4" stroke="#0d1117" stroke-width="1.4"/>
+      <g transform="translate(1030,69)" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 4.5V15h-3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M6.5 7.5h9M6.5 11h6"/></g>
+      <text x="768" y="90" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#0d1117">The assistant</text>
+      <text x="768" y="115" font-size="16" fill="#5f5849">browser chat, MCP client, or editor</text>
+      <text x="768" y="133" font-size="16" fill="#5f5849">returns edits, not shell commands</text>
+      <path d="M 907 140 L 907 300 L 638 300" fill="none" stroke="#0d1117" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="778" y="288" text-anchor="middle" font-size="15" fill="#5f5849" paint-order="stroke" stroke="#f5f0e6" stroke-width="7">Search/Replace blocks, as text</text>
+      <rect x="374" y="258" width="256" height="84" rx="3" fill="#fdfbf4" stroke="#0d1117" stroke-width="1.4"/>
+      <g transform="translate(596,271)" fill="none" stroke="#0d1117" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1.5" width="17" height="19" rx="2"/><path d="M5.5 7.5l2 2 4.5-4.5M5.5 14.5l2 2 4.5-4.5M14.5 7h2.5M14.5 16h2.5"/></g>
+      <text x="392" y="292" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#0d1117">Centaur checks it</text>
+      <text x="392" y="317" font-size="16" fill="#5f5849">every block, path, match,</text>
+      <text x="392" y="335" font-size="16" fill="#5f5849">and the exact resulting diff</text>
+      <line x1="374" y1="300" x2="294" y2="300" stroke="#b08d33" stroke-width="2" marker-end="url(#arrow-gold)"/>
+      <text x="334" y="288" text-anchor="middle" font-size="15" fill="#8a6b18" paint-order="stroke" stroke="#f5f0e6" stroke-width="7">all pass</text>
+      <rect x="16" y="258" width="270" height="84" rx="3" fill="#fdfbf4" stroke="#b08d33" stroke-width="1.8"/>
+      <g transform="translate(252,271)" fill="none" stroke="#b08d33" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="9"/><path d="M6 10.5l3 3 6-6"/></g>
+      <text x="34" y="292" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#8a6b18">You approve the diff</text>
+      <text x="34" y="317" font-size="16" fill="#8a6b18">Centaur snapshots the files,</text>
+      <text x="34" y="335" font-size="16" fill="#8a6b18">then writes them</text>
+      <path d="M 114 258 L 114 140" fill="none" stroke="#b08d33" stroke-width="2" marker-end="url(#arrow-gold)"/>
+      <text x="130" y="196" font-size="15" fill="#8a6b18">the only write to</text>
+      <text x="130" y="214" font-size="15" fill="#8a6b18">your source files</text>
+      <path d="M 502 342 L 502 424" fill="none" stroke="#9d3418" stroke-width="2" marker-end="url(#arrow-stop)"/>
+      <text x="516" y="382" font-size="15" fill="#9d3418">any check fails</text>
+      <rect x="364" y="432" width="276" height="62" rx="3" fill="#fdfbf4" stroke="#9d3418" stroke-width="1.8"/>
+      <g transform="translate(606,445)" fill="none" stroke="#9d3418" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 1.5h13v19H4z"/><path d="M7.5 7l6.5 8M14 7l-6.5 8"/></g>
+      <text x="382" y="466" font-family="ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#9d3418">Nothing is written</text>
+      <text x="382" y="491" font-size="16" fill="#9d3418">not even the blocks that parsed</text>
+      <clipPath id="seal"><circle cx="672" cy="190" r="52"/></clipPath>
+      <circle cx="672" cy="190" r="52" fill="#0d1117"/>
+      <circle cx="672" cy="190" r="57" fill="none" stroke="#b08d33" stroke-width="1.5" opacity=".85"/>
+      <g clip-path="url(#seal)"><g transform="translate(672,190) scale(0.14) translate(-476.5,-380.4)">
+  
+  
+  <defs>
+    <style>
+      .lg-gold{fill:#d0aa52} .lg-paper{fill:#f5f0e6} .lg-ink{fill:#0d1117}
+      .lg-gold-line{fill:none;stroke:#d0aa52;stroke-linecap:round;stroke-linejoin:round}
+      .lg-ink-line{fill:none;stroke:#0d1117;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+  </defs>
+
+  <!-- Native SVG only: no embedded images. -->
+  
+  
+
+  <!-- Horse half: redrawn as clean, intentional geometry. -->
+  <path d="M303 431C234 438 203 478 231 516C251 542 233 570 191 582" class="lg-gold-line" stroke-width="27"/>
+  <path d="M188 582c26 12 52 6 70-14" class="lg-gold-line" stroke-width="10"/>
+
+  <path class="lg-gold" d="
+    M299 369
+    C346 329 414 313 487 323
+    C551 331 598 357 620 397
+    C638 430 634 468 611 497
+    C585 526 543 541 491 542
+    L374 542
+    C323 541 282 520 262 486
+    C238 445 251 401 299 369Z"/>
+
+  <!-- Human half: simplified native vector derived from the visual reference. -->
+  <path d="M 651.1 100.7 L 655.9 109.4 L 655.0 113.2 L 646.3 105.5 L 636.7 101.7 L 614.6 101.7 L 596.4 109.4 L 586.8 116.1 L 577.2 117.0 L 584.9 118.0 L 585.8 119.9 L 574.3 128.6 L 559.9 129.5 L 554.2 124.7 L 557.0 133.4 L 560.9 137.2 L 568.6 139.1 L 568.6 142.0 L 555.1 143.0 L 547.4 137.2 L 548.4 143.0 L 557.0 149.7 L 550.3 159.3 L 549.4 167.9 L 556.1 162.2 L 561.8 160.2 L 566.6 161.2 L 559.0 167.0 L 554.2 174.6 L 558.0 172.7 L 559.9 174.6 L 550.3 181.4 L 554.2 183.3 L 563.8 183.3 L 570.5 180.4 L 571.4 183.3 L 569.5 185.2 L 571.4 188.1 L 581.0 186.2 L 587.8 181.4 L 590.6 183.3 L 581.0 192.9 L 551.3 204.4 L 540.7 214.0 L 535.0 224.6 L 533.0 245.7 L 526.3 268.7 L 526.3 283.1 L 532.1 316.7 L 537.8 325.4 L 562.8 324.4 L 564.7 328.2 L 561.8 330.2 L 563.8 329.2 L 564.7 331.1 L 559.9 334.0 L 559.0 341.7 L 552.2 341.7 L 551.3 348.4 L 542.6 349.4 L 539.8 353.2 L 536.9 352.2 L 536.9 355.1 L 533.0 357.0 L 522.5 357.0 L 521.5 359.0 L 515.8 357.0 L 515.8 420.4 L 697.2 420.4 L 697.2 395.4 L 686.6 360.9 L 686.6 328.2 L 638.6 323.4 L 632.9 319.6 L 632.9 313.8 L 639.6 304.2 L 640.6 307.1 L 635.8 316.7 L 639.6 319.6 L 680.9 322.5 L 701.0 326.3 L 709.7 326.3 L 728.9 321.5 L 737.5 311.0 L 740.4 295.6 L 733.7 285.0 L 733.7 280.2 L 748.1 245.7 L 748.1 240.9 L 727.0 238.0 L 723.1 235.1 L 721.2 230.3 L 706.8 228.4 L 697.2 215.0 L 688.6 208.2 L 656.9 198.6 L 645.4 190.0 L 642.5 184.2 L 643.4 182.3 L 657.8 183.3 L 662.6 179.4 L 662.6 158.3 L 667.4 153.5 L 661.7 141.0 L 661.7 133.4 L 656.9 124.7 L 660.7 119.9 L 661.7 111.3 L 658.8 105.5 Z
+M 707.8 285.0 L 713.5 283.1 L 721.2 284.1 L 731.8 287.9 L 734.6 291.8 L 734.6 297.5 L 727.9 311.0 L 722.2 316.7 L 716.4 316.7 L 706.8 311.9 L 699.1 304.2 L 700.1 301.4 L 703.9 302.3 L 718.3 311.9 L 713.5 307.1 L 703.0 301.4 L 702.0 297.5 L 707.8 296.6 L 722.2 304.2 L 716.4 299.4 L 703.9 294.6 L 705.8 290.8 L 714.5 290.8 L 726.0 295.6 L 720.2 291.8 L 708.7 288.9 L 706.8 287.0 Z
+M 638.6 260.1 L 638.6 262.0 L 629.0 274.5 L 615.6 269.7 L 615.6 267.8 L 618.5 265.8 L 636.7 259.1 Z
+M 688.6 239.0 L 693.4 235.1 L 699.1 235.1 L 722.2 240.9 L 725.0 244.7 L 721.2 247.6 L 710.6 247.6 L 694.3 244.7 L 690.5 242.8 Z
+M 616.6 164.1 L 634.8 200.6 L 636.7 190.0 L 639.6 190.0 L 642.5 193.8 L 642.5 204.4 L 639.6 209.2 L 662.6 206.3 L 679.9 215.9 L 684.7 220.7 L 686.6 225.5 L 689.5 227.4 L 693.4 227.4 L 698.2 224.6 L 701.0 227.4 L 701.0 229.4 L 689.5 231.3 L 677.0 230.3 L 670.3 233.2 L 666.5 239.0 L 664.6 249.5 L 662.6 251.4 L 659.8 251.4 L 650.2 247.6 L 650.2 240.9 L 648.2 235.1 L 640.6 224.6 L 644.4 234.2 L 644.4 246.6 L 641.5 249.5 L 632.9 252.4 L 617.5 252.4 L 603.1 247.6 L 592.6 239.0 L 587.8 231.3 L 581.0 239.0 L 585.8 250.5 L 585.8 263.0 L 578.2 278.3 L 574.3 279.3 L 560.9 277.4 L 551.3 281.2 L 548.4 284.1 L 558.0 280.2 L 575.3 280.2 L 598.3 285.0 L 611.8 285.0 L 621.4 282.2 L 625.2 283.1 L 631.0 278.3 L 650.2 251.4 L 656.9 251.4 L 662.6 255.3 L 660.7 261.0 L 653.0 259.1 L 649.2 260.1 L 654.0 260.1 L 666.5 266.8 L 672.2 271.6 L 672.2 274.5 L 669.4 275.4 L 662.6 270.6 L 655.0 268.7 L 655.9 270.6 L 663.6 273.5 L 669.4 279.3 L 669.4 281.2 L 666.5 282.2 L 657.8 277.4 L 648.2 276.4 L 657.8 279.3 L 662.6 284.1 L 662.6 286.0 L 659.8 287.0 L 654.0 284.1 L 649.2 284.1 L 642.5 291.8 L 633.8 296.6 L 586.8 308.1 L 583.0 308.1 L 582.0 306.2 L 596.4 300.4 L 603.1 299.4 L 569.5 300.4 L 555.1 296.6 L 552.2 293.7 L 553.2 291.8 L 559.9 290.8 L 553.2 289.8 L 543.6 292.7 L 542.6 287.9 L 544.6 282.2 L 551.3 274.5 L 551.3 272.6 L 542.6 261.0 L 542.6 249.5 L 547.4 244.7 L 553.2 244.7 L 563.8 252.4 L 562.8 246.6 L 551.3 234.2 L 548.4 228.4 L 549.4 219.8 L 555.1 212.1 L 562.8 208.2 L 571.4 207.3 L 591.6 214.0 L 579.1 206.3 L 578.2 204.4 L 587.8 199.6 L 600.2 195.8 L 610.8 195.8 L 623.3 202.5 L 622.3 204.4 L 600.2 204.4 L 599.3 203.4 L 615.6 206.3 L 633.8 212.1 L 620.4 192.9 L 614.6 166.0 Z
+M 595.4 146.8 L 607.0 139.1 L 614.6 139.1 L 622.3 146.8 L 623.3 149.7 L 620.4 150.6 L 610.8 143.0 L 622.3 153.5 L 622.3 155.4 L 619.4 156.4 L 612.7 152.6 L 607.0 146.8 L 607.0 143.9 L 597.4 148.7 Z
+M 614.6 127.6 L 611.8 130.5 L 602.2 132.4 L 592.6 137.2 L 588.7 136.2 L 592.6 131.4 L 600.2 127.6 Z
+M 637.7 117.0 L 653.0 122.8 L 659.8 132.4 L 658.8 139.1 L 662.6 143.0 L 663.6 152.6 L 661.7 154.5 L 655.9 154.5 L 660.7 155.4 L 661.7 159.3 L 655.0 160.2 L 659.8 160.2 L 660.7 162.2 L 658.8 164.1 L 653.0 164.1 L 658.8 166.0 L 661.7 168.9 L 661.7 172.7 L 659.8 174.6 L 655.9 175.6 L 647.3 171.8 L 643.4 167.9 L 642.5 153.5 L 631.9 147.8 L 631.0 142.0 L 638.6 132.4 L 638.6 122.8 L 636.7 119.0 Z
+M 602.2 112.2 L 607.9 109.4 L 621.4 109.4 L 631.0 112.2 L 631.9 114.2 L 603.1 114.2 Z" class="lg-gold" fill-rule="evenodd"/>
+
+  <!-- subtle cut at the waist so the centaur join reads clearly -->
+  <path class="lg-ink" d="M493 355c43 1 82 11 117 30-35-8-74-10-116-5Z"/>
+
+  <!-- four readable horse legs -->
+  <path class="lg-gold" d="M300 490h55l-8 75-29 47-20 34h-63l39-55 19-39Z"/>
+  <path class="lg-gold" d="M231 638h74l-8 22h-84Z"/>
+
+  <path class="lg-gold" d="M382 516h47l14 75-13 55h-51l18-57Z"/>
+  <path class="lg-gold" d="M375 638h65l5 22h-76Z"/>
+
+  <path class="lg-gold" d="M538 512h48l20 79-2 55h-52l2-52-18-63Z"/>
+  <path class="lg-gold" d="M545 638h68l8 22h-79Z"/>
+
+  <path class="lg-gold" d="
+    M590 479
+    C615 476 638 484 658 503
+    L711 551
+    C723 562 723 576 714 587
+    L684 622
+    L645 600
+    L673 561
+    L631 533
+    C609 519 594 500 590 479Z"/>
+  <path class="lg-gold" d="M644 596l45 22-15 31-49-25Z"/>
+
+  <path class="lg-ink" d="M354 530c59 17 133 18 191 2-38 25-145 31-191-2Z"/>
+
+  <!-- Clipboard face rebuilt as clean geometry, with code as the visual focal point. -->
+  <g id="code-clipboard">
+    <path d="M629 211L765 226L740 347L632 331Z" class="lg-paper" stroke="#d0aa52" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M679 201L727 207Q737 208 735 219L733 231L670 224L671 212Q672 201 679 201Z" class="lg-gold"/>
+    <rect x="691" y="196" width="26" height="13" rx="5" class="lg-paper" transform="rotate(6 704 203)"/>
+
+    <path d="M670 250l-19 18 19 18M720 255l18 18-18 18M705 243l-21 57" class="lg-ink-line" stroke-width="8"/>
+    <circle cx="657" cy="309" r="4.5" class="lg-ink"/>
+    <circle cx="674" cy="311" r="4.5" class="lg-ink"/>
+    <circle cx="691" cy="313" r="4.5" class="lg-ink"/>
+    <path d="M649 326l29 3M693 331l40 4M647 344l55 6M716 351l16 2" class="lg-ink-line" stroke-width="6"/>
+
+    <!-- restored hand overlap -->
+    <path d="M615 291c15-6 30-2 42 9l-10 18c-15-5-29-4-44 2Z" class="lg-gold"/>
+  </g>
+
+  
+
+</g></g>
+    </g>
+  </svg>
+
+  <p class="note"><code>centaur undo</code> restores the snapshot taken before a write. It stops instead of overwriting a file you changed after Centaur touched it.</p>
+
+  <section class="ways">
+    <h2>Three ways to drive the same loop</h2>
+    <div>
+      <code>get_context(mode: "changed")</code>
+      <p>An MCP client reads context directly, limited to the workspace you fixed at setup.</p>
+    </div>
+    <div>
+      <code>centaur --export --mode changed</code>
+      <p>Writes context files to disk. You choose which of them to upload to a chat.</p>
+    </div>
+    <div>
+      <code>centaur --file response.txt</code>
+      <p>Takes the reply back from a file, the clipboard, or stdin, through the same checks.</p>
+    </div>
+  </section>
+</body>
+</html>

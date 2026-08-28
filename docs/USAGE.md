@@ -150,6 +150,14 @@ Custom templates should preserve `{{SESSION_ID}}`, `{{TOTAL_PARTS}}`, `{{TOTAL_B
 
 ## Troubleshooting
 
+Start with a local health check:
+
+```sh
+centaur doctor
+```
+
+Use `centaur doctor --redact-paths` when sharing the output in an issue. It replaces workspace, Centaur home, history, and integration paths with safe labels; still review the result before posting it.
+
 ### No patch blocks were found
 
 Copy the complete model response. Confirm it contains `File:`, `<<<<<<< SEARCH`, `=======`, and `>>>>>>> REPLACE` delimiter lines. The default Centaur prompt tells the model not to wrap the blocks in an outer code fence.
