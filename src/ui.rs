@@ -579,7 +579,7 @@ pub fn run_export_wizard() {
     let mode = scopes[scope_choice.index].0.mode();
 
     println!("{}", EXPORT_TASK_GUIDANCE.dimmed());
-    
+
     // Use native read_line instead of inquire::Text to avoid crossterm line-wrapping
     // glitches in legacy Windows conhost when typing very long prompts.
     println!(" {} {}", "❯".bright_cyan().bold(), EXPORT_TASK_LABEL);
