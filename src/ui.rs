@@ -14,9 +14,10 @@ use crate::{
 use arboard::Clipboard;
 use colored::*;
 use inquire::ui::{Attributes, Color, RenderConfig, StyleSheet};
-use inquire::{Confirm, Select, Text};
+use inquire::{Confirm, Select};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 pub fn configure_visual_theme() -> RenderConfig<'static> {
@@ -578,10 +579,19 @@ pub fn run_export_wizard() {
     let mode = scopes[scope_choice.index].0.mode();
 
     println!("{}", EXPORT_TASK_GUIDANCE.dimmed());
-    let task_prompt = Text::new(EXPORT_TASK_LABEL)
-        .with_help_message(EXPORT_TASK_HELP)
-        .with_render_config(render_config)
-        .prompt();
+    
+    // Use native read_line instead of inquire::Text to avoid crossterm line-wrapping
+    // glitches in legacy Windows conhost when typing very long prompts.
+    println!(" {} {}", "❯".bright_cyan().bold(), EXPORT_TASK_LABEL);
+    println!("   {}", EXPORT_TASK_HELP.dimmed());
+    print!("   ");
+    let _ = std::io::stdout().flush();
+
+    let mut task_input = String::new();
+    let task_prompt = match std::io::stdin().read_line(&mut task_input) {
+        Ok(_) => Ok(task_input.trim().to_string()),
+        Err(_) => Err(()),
+    };
 
     let Ok(task_prompt) = task_prompt else {
         cancel_export();

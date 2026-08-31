@@ -208,6 +208,9 @@ fn report_apply_results(results: Vec<ApplyResult>) -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    let _ = colored::control::set_virtual_terminal(true);
+
     let args = Args::parse();
     let config = CentaurConfig::load();
     let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
