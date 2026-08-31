@@ -19,3 +19,6 @@ test_export/
 test_export.ps1
 dummy/
 centaur_export_*
+
+# Private plans
+.private/
