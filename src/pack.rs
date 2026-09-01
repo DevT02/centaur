@@ -77,6 +77,7 @@ pub struct PackResult {
 pub fn walk_workspace(root: &Path) -> ignore::Walk {
     ignore::WalkBuilder::new(root)
         .hidden(false)
+        .require_git(false)
         // Lets a project exclude fixtures and vendored trees from exports and audits
         // using ordinary gitignore syntax, without inventing a config format.
         .add_custom_ignore_filename(".centaurignore")

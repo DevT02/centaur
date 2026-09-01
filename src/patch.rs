@@ -1,6 +1,7 @@
 use crate::PatchBlock;
 use crate::history::{BackupFileRecord, PatchSessionRecord};
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -106,11 +107,7 @@ pub fn evaluate_patch_block(
         Ok(c) => c,
         Err(e) => return Err(ApplyResult::IoError(file_path_str, e.to_string())),
     };
-    let mut content = original_content.clone();
-
-    if content.starts_with('\u{FEFF}') {
-        content = content[3..].to_string();
-    }
+    let content = original_content.as_str();
 
     // Check exact match
     let match_count = content.matches(&block.search).count();
@@ -156,7 +153,7 @@ pub fn evaluate_patch_block(
     }
 
     // Check fuzzy match
-    if let Some(fuzzy_result) = apply_fuzzy_match(&content, &block.search, &block.replace) {
+    if let Some(fuzzy_result) = apply_fuzzy_match(content, &block.search, &block.replace) {
         match fuzzy_result {
             Ok(updated) => {
                 return Ok(MemoryPatchPlan {
@@ -179,7 +176,9 @@ pub fn evaluate_patch_block(
 }
 
 fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<Result<String, bool>> {
-    let content_lines: Vec<&str> = content.lines().collect();
+    let has_bom = content.starts_with('\u{FEFF}');
+    let comparable_content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+    let content_lines: Vec<&str> = comparable_content.lines().collect();
     let search_lines: Vec<&str> = search.lines().map(|l| l.trim()).collect();
 
     // A search block longer than the file can never match, and the window loop
@@ -207,14 +206,23 @@ fn apply_fuzzy_match(content: &str, search: &str, replace: &str) -> Option<Resul
     }
 
     if let Some(&idx) = matches_found.first() {
+        let line_ending = if content.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let replacement = replace.replace("\r\n", "\n").replace('\n', line_ending);
         let mut new_lines = Vec::new();
         new_lines.extend_from_slice(&content_lines[..idx]);
-        new_lines.push(replace);
+        new_lines.push(&replacement);
         new_lines.extend_from_slice(&content_lines[idx + search_lines.len()..]);
 
-        let mut result = new_lines.join("\n");
-        if content.ends_with("\r\n") || content.ends_with('\n') {
-            result.push('\n');
+        let mut result = new_lines.join(line_ending);
+        if content.ends_with('\n') {
+            result.push_str(line_ending);
+        }
+        if has_bom {
+            result.insert(0, '\u{FEFF}');
         }
         Some(Ok(result))
     } else {
@@ -391,14 +399,16 @@ pub fn apply_planned_transactional(
         .collect();
     // No snapshot means no undo. Refuse to touch the workspace rather than modify
     // files the user cannot get back.
-    if let Err(e) = PatchSessionRecord::record_patch_session(base_dir, backup_records) {
-        return Err((
-            vec![ApplyResult::IoError("<undo snapshot>".to_string(), e)],
-            "Could not write the undo snapshot. Aborting without modifying disk.".to_string(),
-        ));
-    }
+    let session_id =
+        PatchSessionRecord::record_patch_session(base_dir, backup_records).map_err(|e| {
+            (
+                vec![ApplyResult::IoError("<undo snapshot>".to_string(), e)],
+                "Could not write the undo snapshot. Aborting without modifying disk.".to_string(),
+            )
+        })?;
 
-    // Execute atomic writes
+    // Write through sibling temporary files. If any file fails, the snapshot is
+    // used below to restore every plan that was already applied.
     for plan in plans {
         if let Some(parent) = plan.target_path.parent()
             && let Err(e) = fs::create_dir_all(parent)
@@ -410,8 +420,31 @@ pub fn apply_planned_transactional(
             continue;
         }
 
-        let temp_path = plan.target_path.with_extension("centaur_tmp");
-        if let Err(e) = fs::write(&temp_path, &plan.new_content) {
+        let mut temp_name = plan
+            .target_path
+            .file_name()
+            .unwrap_or_default()
+            .to_os_string();
+        temp_name.push(format!(".centaur_{session_id}.tmp"));
+        let temp_path = plan.target_path.with_file_name(temp_name);
+        let mut temp_created = false;
+        let write_result = (|| -> std::io::Result<()> {
+            let mut temp = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)?;
+            temp_created = true;
+            temp.write_all(plan.new_content.as_bytes())?;
+            #[cfg(unix)]
+            if !plan.is_new_file {
+                fs::set_permissions(&temp_path, fs::metadata(&plan.target_path)?.permissions())?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = write_result {
+            if temp_created {
+                let _ = fs::remove_file(&temp_path);
+            }
             results.push(ApplyResult::IoError(
                 plan.block.file_path.clone(),
                 e.to_string(),
@@ -437,6 +470,38 @@ pub fn apply_planned_transactional(
         } else {
             results.push(ApplyResult::Updated(plan.block.file_path.clone()));
         }
+    }
+
+    let write_failures: Vec<ApplyResult> = results
+        .iter()
+        .filter(|result| matches!(result, ApplyResult::IoError(_, _)))
+        .cloned()
+        .collect();
+    if !write_failures.is_empty() {
+        return match PatchSessionRecord::revert_session(base_dir, &session_id) {
+            Ok(_) => {
+                let _ = PatchSessionRecord::discard_session(&session_id);
+                Err((
+                    write_failures,
+                    "A file could not be written. Centaur restored the original project files automatically."
+                        .to_string(),
+                ))
+            }
+            Err(rollback_error) => {
+                let mut failures = write_failures;
+                failures.push(ApplyResult::IoError(
+                    "<automatic recovery>".to_string(),
+                    rollback_error,
+                ));
+                Err((
+                    failures,
+                    format!(
+                        "A file could not be written and automatic recovery could not finish. Run 'centaur undo {}' after reviewing the workspace.",
+                        session_id
+                    ),
+                ))
+            }
+        };
     }
 
     Ok(results)
@@ -557,6 +622,89 @@ mod tests {
             [ApplyResult::SourceChanged(path)] if path == "code.rs"
         ));
         assert_eq!(fs::read_to_string(file).unwrap(), "newer user work\n");
+    }
+
+    #[test]
+    fn write_failure_restores_files_already_written() {
+        use_scratch_home();
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first.txt");
+        let blocked = dir.path().join("blocked");
+        fs::write(&first, "before\n").unwrap();
+        fs::create_dir(&blocked).unwrap();
+        let blocks = vec![
+            PatchBlock {
+                file_path: "first.txt".to_string(),
+                search: "before".to_string(),
+                replace: "after".to_string(),
+            },
+            PatchBlock {
+                file_path: "blocked/new.txt".to_string(),
+                search: String::new(),
+                replace: "new".to_string(),
+            },
+        ];
+        let plans = plan_blocks_transactional(dir.path(), &blocks).unwrap();
+        fs::remove_dir(&blocked).unwrap();
+        fs::write(&blocked, "not a directory").unwrap();
+
+        let error = apply_planned_transactional(dir.path(), &plans).unwrap_err();
+
+        assert!(error.1.contains("restored"), "{}", error.1);
+        assert_eq!(fs::read_to_string(first).unwrap(), "before\n");
+        assert_eq!(fs::read_to_string(blocked).unwrap(), "not a directory");
+    }
+
+    #[test]
+    fn patch_does_not_overwrite_an_existing_temp_sibling() {
+        use_scratch_home();
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("source.rs");
+        let sibling = dir.path().join("source.centaur_tmp");
+        fs::write(&target, "before\n").unwrap();
+        fs::write(&sibling, "keep me\n").unwrap();
+
+        apply_blocks_transactional(
+            dir.path(),
+            &[PatchBlock {
+                file_path: "source.rs".to_string(),
+                search: "before".to_string(),
+                replace: "after".to_string(),
+            }],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(target).unwrap(), "after\n");
+        assert_eq!(fs::read_to_string(sibling).unwrap(), "keep me\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn patch_preserves_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use_scratch_home();
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("script.sh");
+        fs::write(&target, "echo before\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+
+        apply_blocks_transactional(
+            dir.path(),
+            &[PatchBlock {
+                file_path: "script.sh".to_string(),
+                search: "before".to_string(),
+                replace: "after".to_string(),
+            }],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::metadata(target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 
     #[cfg(unix)]

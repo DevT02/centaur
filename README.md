@@ -5,14 +5,14 @@
 <h1 align="center">The Clipboard Centaur</h1>
 
 <p align="center">
-  Use browser-based AI coding assistants with your local repository without giving them shell access.
+  Turn an AI conversation into a local project change you can make, inspect, or undo.
 </p>
 
 ## What it does
 
-Centaur gives AI chats workspace-scoped MCP tools for reading context, applying reviewed patches, and undoing them. It also retains the file-and-clipboard workflow for clients without MCP access.
+Centaur gives AI chats workspace-scoped tools for reading context, preparing reviewed updates, and undoing changes. It also retains the file-and-clipboard workflow for clients without MCP access.
 
-It is meant for developers who already use ChatGPT, Claude, Gemini, or another desktop or web client and do not want to give a remote model shell access. Centaur can also run as a workspace-scoped MCP server for clients that support local tools.
+It is meant for developers who already use ChatGPT, Claude, Gemini, or another desktop or web client and want those conversations to become real local changes without adopting a terminal coding agent. Centaur can also run as a workspace-scoped MCP server for clients that support local tools.
 
 ## Why use it?
 
@@ -21,10 +21,17 @@ It is meant for developers who already use ChatGPT, Claude, Gemini, or another d
 - Centaur validates the full patch set before it writes any part of it. A missing or ambiguous Search block stops the apply.
 - `centaur install` configures supported MCP clients and installs their Centaur commands or skills.
 - Each successful apply records a workspace-scoped undo snapshot. Undo refuses to overwrite files changed after that patch.
+- If a later file write fails, Centaur uses that snapshot to restore earlier writes automatically and reports a recovery command if restoration cannot finish.
 
 ## Install
 
-Centaur requires [Rust 1.97.1 or newer](https://www.rust-lang.org/tools/install). Contributors using `rustup` automatically get the repository's tested toolchain.
+Tagged versions are packaged for Windows x86_64, Linux x86_64, and Intel and
+Apple Silicon macOS on the [release page](https://github.com/DevT02/centaur/releases).
+Each release includes `SHA256SUMS.txt`. If the version you need has not been
+published yet, install from source below.
+
+Source installation requires [Rust 1.97.1 or newer](https://www.rust-lang.org/tools/install).
+Contributors using `rustup` automatically get the repository's tested toolchain.
 
 ```sh
 cargo install --git https://github.com/DevT02/centaur.git --locked
@@ -45,7 +52,7 @@ cargo install --path .
 | ChatGPT on the web | Connect the local stdio server through Secure MCP Tunnel | Call `apply_patch` or `undo` |
 | Claude or Gemini on the web | Connect an authenticated HTTPS proxy to Centaur's HTTP endpoint | Call `apply_patch` or `undo` |
 | Desktop app with MCP support | Call `get_context` | Call `apply_patch` or `undo` |
-| VS Code | Read the active workspace | Press `Ctrl+Alt+V` or use the Centaur status-bar item |
+| VS Code | Press `Ctrl+Alt+T` or use the Centaur status-bar item | Review and apply with `Ctrl+Alt+V` |
 | Terminal-based agent or editor | Run the Centaur CLI directly | Run the Centaur CLI directly |
 
 <p align="center">
@@ -56,11 +63,7 @@ cargo install --path .
 
 ### Export from the terminal
 
-Run one explicit command to package changed files and print every next step. Running `centaur` with no arguments opens the interactive workspace menu for the same workflow.
-
-<p align="center">
-  <img src="docs/screenshots/cli_export_workflow.png" alt="Centaur changed-file export with upload and patch-response instructions" width="900" />
-</p>
+Run `centaur task <description>` to choose useful project context and print every next step. Running `centaur` with no arguments opens the interactive workspace menu for the same workflow.
 
 ### Check setup without exposing local paths
 
@@ -83,18 +86,6 @@ Dry runs use the same parser and planner as a real apply, show the computed diff
 
 `centaur install` adds `/centaur` commands to supported clients, including Antigravity, Claude, ChatGPT/Codex, Cursor, and Windsurf.
 
-<p align="center">
-  <img src="docs/screenshots/codex_centaur_slash_command.png" alt="The Centaur command selected in Codex" width="760" />
-  <br />
-  <sub>Codex</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/antigravity_centaur_slash_command.png" alt="The Centaur command selected in Antigravity" width="650" />
-  <br />
-  <sub>Antigravity</sub>
-</p>
-
 ### No-copy browser workflow
 
 ChatGPT can reach Centaur's existing stdio server through [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). Configure the tunnel's local command as:
@@ -116,21 +107,9 @@ Put an OAuth-capable HTTPS tunnel or reverse proxy in front of `http://127.0.0.1
 
 1. Centaur copies the prompt after an export. Paste it into the chat, attach `centaur_context_part001.txt` and any additional parts, then send the message.
 
-<p align="center">
-  <img src="docs/screenshots/chatgpt_step1_message_sent.png" alt="Centaur prompt pasted and file attached in ChatGPT" width="620" />
-</p>
-
 2. The model reads the exported files and replies with a Centaur patch payload, or exactly `NO_CHANGES` when no file edits are needed.
 
-<p align="center">
-  <img src="docs/screenshots/chatgpt_step2_ai_thinking.png" alt="ChatGPT reading Centaur export and generating patches" width="620" />
-</p>
-
 3. Once the response is complete, copy it and run `centaur --clipboard`. Centaur validates the complete payload, shows the exact computed diff, and asks whether to apply it.
-
-<p align="center">
-  <img src="docs/screenshots/chatgpt_step3_copy_response.png" alt="ChatGPT response complete with Copy response button" width="620" />
-</p>
 
 
 ### Patch format
@@ -169,13 +148,15 @@ From the repository you want the AI to edit:
 ### Browser chat
 
 ```sh
-# 1. Export changed/untracked files plus your task.
-centaur --export --mode changed --task "Add keyboard navigation to the command menu"
+# 1. Describe the change.
+centaur task Add keyboard navigation to the command menu
 ```
 
-Centaur opens the export folder and copies the prompt. Paste it into the chat and attach every generated `centaur_context_part*.txt` file.
+Centaur uses changed and untracked files when the Git worktree has current changes. Otherwise it uses the full project. It prints the choice, opens the export folder, and copies the prompt. Paste it into the chat and attach every generated `centaur_context_part*.txt` file.
 
-When the AI replies with a Centaur patch payload, copy the response and run:
+Use `centaur task --full <description>` to include the full project or `centaur task --redact <description>` to mask detected credentials in the temporary export copy.
+
+When the AI replies, copy the complete response and run:
 
 ```sh
 # 2. Validate, preview, and apply the response.
@@ -183,6 +164,10 @@ centaur --clipboard
 
 # 3. Revert the latest applied patch if needed.
 centaur undo
+
+# 4. Inspect detected project checks, then run them explicitly.
+centaur check
+centaur check --run
 ```
 
 For scripts, pipe one complete payload through standard input. Writes require the explicit `--yes` approval flag; omit it or use `--dry-run` to validate without writing.
@@ -227,6 +212,8 @@ centaur --export --mode changed --redact
 
 | Command | Action |
 | --- | --- |
+| `centaur task [--full] [--redact] <description...>` | Prepare the right project context and prompt for an AI change |
+| `centaur check [--run]` | Show manifest-backed project checks; `--run` executes them after inspection |
 | `centaur install` | Configure supported MCP clients and install Centaur commands or skills |
 | `centaur doctor [--redact-paths]` | Check core health and optional integrations; hide local paths for shareable output |
 | `centaur update` | Reinstall the latest version from the Centaur Git repository |

@@ -1,9 +1,17 @@
 {
   "name": "centaur-vscode",
   "displayName": "The Clipboard Centaur",
-  "description": "1-click Search/Replace patch application and context exports for VS Code",
+  "description": "Start, review, apply, and undo AI-assisted project updates with Centaur",
   "version": "0.1.0",
   "publisher": "centaur",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DevT02/centaur.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DevT02/centaur/issues"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -12,6 +20,8 @@
     "Formatters"
   ],
   "activationEvents": [
+    "onCommand:centaur.task",
+    "onCommand:centaur.check",
     "onCommand:centaur.applyClipboard",
     "onCommand:centaur.undo",
     "onCommand:centaur.export"
@@ -20,14 +30,26 @@
   "contributes": {
     "commands": [
       {
+        "command": "centaur.task",
+        "title": "Centaur: Start an AI Task",
+        "category": "Centaur",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "centaur.applyClipboard",
-        "title": "Centaur: Apply Clipboard Patch",
+        "title": "Centaur: Apply AI Update",
         "category": "Centaur",
         "icon": "$(zap)"
       },
       {
+        "command": "centaur.check",
+        "title": "Centaur: Check Project",
+        "category": "Centaur",
+        "icon": "$(pass)"
+      },
+      {
         "command": "centaur.undo",
-        "title": "Centaur: Undo Last Patch",
+        "title": "Centaur: Undo Last Change",
         "category": "Centaur",
         "icon": "$(discard)"
       },
@@ -39,6 +61,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "centaur.task",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      },
       {
         "command": "centaur.applyClipboard",
         "key": "ctrl+alt+v",

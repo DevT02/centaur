@@ -8,6 +8,7 @@ use crate::patch::{
 };
 use crate::prompt::handle_prompt_edit;
 use crate::secrets::scan_file_for_secrets;
+use crate::verification;
 use crate::{
     PatchBlock, PatchPayload, parse_patch_payload, render_patch_plan, summarize_patch_blocks,
 };
@@ -52,7 +53,7 @@ pub fn render_workspace_dashboard() {
         "{}  {}   {}",
         "│".bright_cyan(),
         "✦ THE CLIPBOARD CENTAUR ✦".bright_yellow().bold(),
-        "AI Pair-Programming & Patch Engine".bright_cyan().bold()
+        "AI Project Update Workflow".bright_cyan().bold()
     );
     println!(
         "{}",
@@ -111,7 +112,7 @@ pub fn render_workspace_dashboard() {
     } else if search_markers > 0 {
         // Has SEARCH markers but failed to parse — malformed delimiters
         let clip_msg = format!(
-            "📋 Clipboard  : {} patch marker(s) found but could not be parsed — check delimiters",
+            "📋 Clipboard  : {} AI update marker(s) found but could not be parsed — check delimiters",
             search_markers
         );
         println!("{}  {}", "│".bright_cyan(), clip_msg.bright_yellow().bold());
@@ -120,7 +121,7 @@ pub fn render_workspace_dashboard() {
         println!("{}  {}", "│".bright_cyan(), clip_msg.dimmed());
     } else {
         let clip_msg =
-            "📋 Clipboard  : Text copied, but no patch found — copy the complete AI response";
+            "📋 Clipboard  : Text copied, but no AI update found — copy the complete AI response";
         println!("{}  {}", "│".bright_cyan(), clip_msg.dimmed());
     }
 
@@ -143,22 +144,84 @@ fn get_git_branch(root: &PathBuf) -> String {
     }
 }
 
-fn print_patch_plan(blocks: &[PatchBlock]) {
-    println!("\n{}", "🧾 --- PATCH REVIEW ---".bright_cyan().bold());
+fn print_change_summary(blocks: &[PatchBlock]) {
+    println!("\n{}", "🧾 --- AI UPDATE SUMMARY ---".bright_cyan().bold());
     for summary in summarize_patch_blocks(blocks) {
         let action = if summary.creates_file {
             "CREATE"
         } else {
             "UPDATE"
         };
+        let edit_word = if summary.block_count == 1 {
+            "edit"
+        } else {
+            "edits"
+        };
         println!(
-            "   {} {}  ({} block(s), -{} +{} lines)",
+            "   {} {}  ({} {}, {} lines removed, {} lines added)",
             action.bright_yellow().bold(),
             summary.file_path.as_str().bright_white(),
             summary.block_count,
+            edit_word,
             summary.removed_lines,
             summary.added_lines
         );
+    }
+}
+
+fn describe_apply_result(result: &ApplyResult) -> String {
+    match result {
+        ApplyResult::Created(path) => format!("Created {path}"),
+        ApplyResult::Updated(path) => format!("Updated {path}"),
+        ApplyResult::MatchNotFound(path) => format!(
+            "Could not find the intended code in {path}. The project may have changed since the AI read it."
+        ),
+        ApplyResult::AmbiguousMatch(path) => format!(
+            "Found more than one possible place to change in {path}. Ask the AI for a more specific update."
+        ),
+        ApplyResult::SourceChanged(path) => format!(
+            "{path} changed while this update was being reviewed. Review the update again before making changes."
+        ),
+        ApplyResult::IoError(path, error) => {
+            format!("Could not read or write {path}: {error}")
+        }
+        ApplyResult::SecurityError(error) => format!("Centaur refused this update: {error}"),
+        ApplyResult::DryRunSimulated(path) => {
+            format!("Checked {path} without changing it")
+        }
+    }
+}
+
+fn offer_project_checks(root: &std::path::Path) {
+    let checks = verification::detect(root);
+    if checks.is_empty() {
+        return;
+    }
+
+    println!("\n{}", "Detected project checks:".bright_cyan().bold());
+    for description in verification::describe(&checks) {
+        println!("   - {description}");
+    }
+    let run_checks =
+        Confirm::new("Run these project commands now? They may execute repository code.")
+            .with_default(false)
+            .with_render_config(configure_visual_theme())
+            .prompt()
+            .unwrap_or(false);
+    if run_checks {
+        if verification::run_all(root, &checks) {
+            println!(
+                "\n{}",
+                "All detected project checks passed.".bright_green().bold()
+            );
+        } else {
+            println!(
+                "\n{}",
+                "One or more project checks failed. Review the output before continuing."
+                    .bright_red()
+                    .bold()
+            );
+        }
     }
 }
 
@@ -167,40 +230,48 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
 
     let plans = match plan_blocks_transactional(&root_dir, blocks) {
         Ok(plans) => plans,
-        Err((failures, msg)) => {
+        Err((failures, _)) => {
             println!(
                 "\n{}",
-                format!("❌ Patch validation failed: {}", msg)
+                "❌ Centaur could not safely prepare this AI update. No project files were changed."
                     .bright_red()
                     .bold()
             );
-            for failure in failures {
-                println!("   - {}", format!("{:?}", failure).bright_red());
+            for failure in &failures {
+                println!("   - {}", describe_apply_result(failure).bright_red());
             }
             return true;
         }
     };
 
-    print_patch_plan(blocks);
-    println!("\n{}", render_patch_plan(&plans));
+    print_change_summary(blocks);
 
-    let apply_now = Confirm::new("Apply exactly this patch?")
+    let show_code = Confirm::new("View exact code changes?")
+        .with_default(false)
+        .with_render_config(configure_visual_theme())
+        .prompt()
+        .unwrap_or(false);
+    if show_code {
+        println!("\n{}", render_patch_plan(&plans));
+    }
+
+    let apply_now = Confirm::new("Make these changes?")
         .with_default(false)
         .with_render_config(configure_visual_theme())
         .prompt()
         .unwrap_or(false);
 
     if !apply_now {
-        println!("{}", "Patch was not applied.".bright_yellow());
+        println!("{}", "The AI update was not applied.".bright_yellow());
         return false;
     }
 
     match apply_planned_transactional(&root_dir, &plans) {
         Ok(results) => {
             let mut had_write_error = false;
-            println!("\n{}", "✨ Patch results:".bright_green().bold());
+            println!("\n{}", "✨ AI update results:".bright_green().bold());
 
-            for result in results {
+            for result in &results {
                 match result {
                     ApplyResult::Created(path) => {
                         println!("   - {}", format!("Created {}", path).bright_green())
@@ -208,14 +279,11 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
                     ApplyResult::Updated(path) => {
                         println!("   - {}", format!("Updated {}", path).bright_green())
                     }
-                    ApplyResult::IoError(path, error) => {
+                    ApplyResult::IoError(_, _) => {
                         had_write_error = true;
-                        println!(
-                            "   - {}",
-                            format!("Could not write {}: {}", path, error).bright_red()
-                        );
+                        println!("   - {}", describe_apply_result(result).bright_red());
                     }
-                    other => println!("   - {}", format!("{:?}", other).bright_yellow()),
+                    other => println!("   - {}", describe_apply_result(other).bright_yellow()),
                 }
             }
 
@@ -233,17 +301,13 @@ fn review_and_apply_blocks(blocks: &[PatchBlock]) -> bool {
                         .bright_cyan()
                         .bold()
                 );
+                offer_project_checks(&root_dir);
             }
         }
-        Err((failures, msg)) => {
-            println!(
-                "\n{}",
-                format!("❌ Failed to apply patch: {}", msg)
-                    .bright_red()
-                    .bold()
-            );
-            for failure in failures {
-                println!("   - {}", format!("{:?}", failure).bright_red());
+        Err((failures, message)) => {
+            println!("\n{}", format!("❌ {message}").bright_red().bold());
+            for failure in &failures {
+                println!("   - {}", describe_apply_result(failure).bright_red());
             }
         }
     }
@@ -267,11 +331,11 @@ const PRIMARY_MENU_ITEMS: [(HubAction, &str); 5] = [
     ),
     (
         HubAction::Apply,
-        "⚡ APPLY AI PATCH   — Copy the complete AI response first, then apply",
+        "⚡ APPLY AI UPDATE  — Copy the complete AI response first, then apply",
     ),
     (
         HubAction::Undo,
-        "↺  UNDO LAST PATCH  — Restore the latest workspace snapshot",
+        "↺  UNDO LAST CHANGE — Restore the latest workspace snapshot",
     ),
     (
         HubAction::MoreTools,
@@ -343,11 +407,17 @@ pub fn run_interactive_hub() {
         .unwrap_or_default();
     match parse_patch_payload(&clip_text) {
         Ok(PatchPayload::Blocks(clip_blocks)) => {
+            let edit_word = if clip_blocks.len() == 1 {
+                "edit"
+            } else {
+                "edits"
+            };
             println!(
                 "   {}",
                 format!(
-                    "⚡ AI code edits detected: {} block(s). Review the validated plan below.",
-                    clip_blocks.len()
+                    "⚡ AI update ready. {} proposed {} passed the first check.",
+                    clip_blocks.len(),
+                    edit_word,
                 )
                 .bright_green()
                 .bold()
@@ -365,14 +435,17 @@ pub fn run_interactive_hub() {
         ),
         Err(error) if crate::count_search_markers(&clip_text) > 0 => println!(
             "   {}",
-            format!("Clipboard patch rejected: {}", error)
+            format!("Clipboard AI update rejected: {}", error)
                 .bright_red()
                 .bold()
         ),
         Err(_) => {}
     }
 
-    println!("{}", "  Workflow: Export → AI → Review → Apply".dimmed());
+    println!(
+        "{}",
+        "  Workflow: Describe → AI → Review → Make changes".dimmed()
+    );
     println!("{}", "  What do you want to do?".bright_white().bold());
 
     let options: Vec<&str> = PRIMARY_MENU_ITEMS.iter().map(|(_, label)| *label).collect();
@@ -443,7 +516,7 @@ pub fn run_apply_interactive() {
     );
     println!(
         "{}",
-        "Validates every Search/Replace block, summarizes affected files, then asks before writing."
+        "Checks the complete AI update, summarizes affected files, then asks before writing."
             .dimmed()
     );
     println!();
@@ -760,7 +833,7 @@ pub fn run_export_wizard() {
 
         println!("\n{}", "--- WHEN THE AI REPLIES ---".bright_cyan().bold());
         println!("   4. Copy the complete AI response");
-        println!("      Include all Search/Replace code blocks in your copy.");
+        println!("      Include the entire response in your copy.");
         println!("   5. Run centaur again");
         println!("      Review the proposed changes, then approve them.");
     } else {
@@ -778,7 +851,7 @@ pub fn run_export_wizard() {
             "   {}. Copy the complete AI response",
             result.summary.total_batches + 2
         );
-        println!("      Include all Search/Replace code blocks in your copy.");
+        println!("      Include the entire response in your copy.");
         println!("   {}. Run centaur again", result.summary.total_batches + 3);
         println!("      Review the proposed changes, then approve them.");
     }
@@ -847,7 +920,7 @@ pub fn run_history_interactive() {
     );
     println!(
         "{}",
-        "Reverts files to their exact state prior to the selected patch session.".dimmed()
+        "Reverts files to their exact state before the selected AI update.".dimmed()
     );
     println!();
 
@@ -856,7 +929,7 @@ pub fn run_history_interactive() {
     if sessions.is_empty() {
         println!(
             "{}",
-            "⚠️ No previous patch sessions found for this workspace.".bright_yellow()
+            "⚠️ No previous AI updates found for this workspace.".bright_yellow()
         );
         return;
     }
@@ -928,7 +1001,7 @@ pub fn run_dry_run_interactive() {
     let root_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     match plan_blocks_transactional(&root_dir, &blocks) {
         Ok(plans) => {
-            print_patch_plan(&blocks);
+            print_change_summary(&blocks);
             println!("\n{}", render_patch_plan(&plans));
         }
         Err((_, msg)) => {
@@ -1009,8 +1082,8 @@ mod tests {
 
         assert_eq!(labels.len(), 5);
         assert!(labels[0].contains("START AI TASK"));
-        assert!(labels[1].contains("APPLY AI PATCH"));
-        assert!(labels[2].contains("UNDO LAST PATCH"));
+        assert!(labels[1].contains("APPLY AI UPDATE"));
+        assert!(labels[2].contains("UNDO LAST CHANGE"));
         assert!(labels[3].contains("MORE TOOLS"));
         assert!(labels.iter().all(|label| !label.contains("SECURITY AUDIT")));
     }
@@ -1073,5 +1146,40 @@ mod tests {
                 ExportScopeChoice::Changed | ExportScopeChoice::Staged
             )
         }));
+    }
+
+    #[test]
+    fn interactive_apply_failures_use_plain_language() {
+        let cases = [
+            (
+                ApplyResult::MatchNotFound("src/main.rs".to_string()),
+                "Could not find the intended code",
+            ),
+            (
+                ApplyResult::AmbiguousMatch("src/main.rs".to_string()),
+                "more than one possible place",
+            ),
+            (
+                ApplyResult::SourceChanged("src/main.rs".to_string()),
+                "changed while this update was being reviewed",
+            ),
+            (
+                ApplyResult::IoError("src/main.rs".to_string(), "access denied".to_string()),
+                "Could not read or write src/main.rs: access denied",
+            ),
+            (
+                ApplyResult::SecurityError("path leaves workspace".to_string()),
+                "path leaves workspace",
+            ),
+        ];
+
+        for (result, expected) in cases {
+            let description = describe_apply_result(&result);
+            assert!(description.contains(expected), "{description}");
+            assert!(
+                !description.contains(&format!("{:?}", result)),
+                "debug output leaked into the interactive message: {description}"
+            );
+        }
     }
 }

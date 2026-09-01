@@ -4,7 +4,7 @@
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
-use the_clipboard_centaur::git::get_changed_files;
+use the_clipboard_centaur::git::{get_changed_files, get_staged_files, has_worktree_changes};
 
 fn git(dir: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")
@@ -125,5 +125,57 @@ fn paths_with_spaces_survive_parsing() {
         found.contains(&"my notes.md".to_string()),
         "got {:?}",
         found
+    );
+}
+
+#[test]
+fn changed_files_stay_inside_a_nested_workspace() {
+    let dir = repo();
+    let workspace = dir.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(dir.path().join("outside.rs"), "pub fn outside() {}\n").unwrap();
+    fs::write(workspace.join("inside.rs"), "pub fn inside() {}\n").unwrap();
+    git(dir.path(), &["add", "."]);
+    git(dir.path(), &["commit", "-m", "init"]);
+
+    fs::write(
+        dir.path().join("outside.rs"),
+        "pub fn outside() { changed(); }\n",
+    )
+    .unwrap();
+    assert!(
+        !has_worktree_changes(&workspace),
+        "a change elsewhere in the parent repository must not change nested workspace scope"
+    );
+
+    fs::write(
+        workspace.join("inside.rs"),
+        "pub fn inside() { changed(); }\n",
+    )
+    .unwrap();
+    assert!(has_worktree_changes(&workspace));
+
+    let canonical_workspace = workspace.canonicalize().unwrap();
+    let found = get_changed_files(&workspace);
+    assert!(
+        found.iter().all(|path| path
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(&canonical_workspace))),
+        "paths outside the selected workspace leaked into the export: {:?}",
+        found
+    );
+    assert!(found.contains(&workspace.join("inside.rs")));
+    assert!(!found.contains(&dir.path().join("outside.rs")));
+
+    git(dir.path(), &["add", "."]);
+    let staged = get_staged_files(&workspace);
+    assert!(staged.contains(&workspace.join("inside.rs")));
+    assert!(!staged.contains(&dir.path().join("outside.rs")));
+    assert!(
+        staged.iter().all(|path| path
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(&canonical_workspace))),
+        "staged paths outside the selected workspace leaked into the export: {:?}",
+        staged
     );
 }

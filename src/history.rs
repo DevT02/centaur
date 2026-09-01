@@ -97,6 +97,14 @@ impl PatchSessionRecord {
         sessions
     }
 
+    pub fn discard_session(session_id: &str) -> Result<(), String> {
+        let path = Self::history_dir().join(format!("session_{}.json", session_id));
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Sessions recorded against `base_dir`, newest first. Reverting is only ever
     /// safe within the workspace the patch was applied to.
     pub fn list_sessions_for(base_dir: &Path) -> Vec<PatchSessionRecord> {

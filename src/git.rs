@@ -19,15 +19,60 @@ pub fn is_git_repo(root: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub fn has_worktree_changes(root: &Path) -> bool {
+    Command::new("git")
+        .args([
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ])
+        .current_dir(root)
+        .output()
+        .map(|output| output.status.success() && !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+fn contained_file(root: &Path, candidate: PathBuf) -> Option<PathBuf> {
+    let canonical = candidate.canonicalize().ok()?;
+    (canonical.is_file() && canonical.starts_with(root)).then_some(candidate)
+}
+
+fn repository_root(root: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
 pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
+    let Some(canonical_root) = root.canonicalize().ok() else {
+        return files;
+    };
+    let repository_root = repository_root(root).unwrap_or_else(|| root.to_path_buf());
 
     // -z avoids git's quoting/escaping of unusual paths, and --untracked-files=all
     // expands new directories into their individual files. With the default output,
     // a brand-new folder appeared as a single "dir/" entry that failed the is_file
     // check, so none of its contents were ever exported.
     if let Ok(output) = Command::new("git")
-        .args(["status", "--porcelain", "-z", "--untracked-files=all"])
+        .args([
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ])
         .current_dir(root)
         .output()
         && output.status.success()
@@ -51,8 +96,12 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
                 continue;
             }
 
-            let p = root.join(path_str);
-            if p.is_file() && !files.contains(&p) {
+            // Porcelain `-z` reports paths relative to the repository root, even
+            // when Git runs from a nested workspace.
+            let Some(p) = contained_file(&canonical_root, repository_root.join(path_str)) else {
+                continue;
+            };
+            if !files.contains(&p) {
                 files.push(p);
             }
         }
@@ -67,8 +116,10 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
         "Makefile",
     ];
     for m in manifests {
-        let p = root.join(m);
-        if p.exists() && p.is_file() && !files.contains(&p) {
+        let Some(p) = contained_file(&canonical_root, root.join(m)) else {
+            continue;
+        };
+        if !files.contains(&p) {
             files.push(p);
         }
     }
@@ -78,32 +129,57 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
 
 pub fn get_staged_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
+    let Some(canonical_root) = root.canonicalize().ok() else {
+        return files;
+    };
+    let repository_root = repository_root(root).unwrap_or_else(|| root.to_path_buf());
 
     if let Ok(output) = Command::new("git")
-        .args(["diff", "--cached", "--name-only"])
+        .args(["diff", "--cached", "--name-only", "-z", "--", "."])
         .current_dir(root)
         .output()
         && output.status.success()
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                let p = root.join(trimmed);
-                if p.exists() && p.is_file() {
-                    files.push(p);
-                }
+        for path in stdout.split('\0').filter(|path| !path.is_empty()) {
+            let Some(p) = contained_file(&canonical_root, repository_root.join(path)) else {
+                continue;
+            };
+            if !files.contains(&p) {
+                files.push(p);
             }
         }
     }
 
     let manifests = ["Cargo.toml", "package.json", "pyproject.toml", "README.md"];
     for m in manifests {
-        let p = root.join(m);
-        if p.exists() && p.is_file() && !files.contains(&p) {
+        let Some(p) = contained_file(&canonical_root, root.join(m)) else {
+            continue;
+        };
+        if !files.contains(&p) {
             files.push(p);
         }
     }
 
     files
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worktree_change_check_distinguishes_clean_and_untracked() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(!has_worktree_changes(dir.path()));
+
+        std::fs::write(dir.path().join("new.txt"), "new").unwrap();
+        assert!(has_worktree_changes(dir.path()));
+    }
 }

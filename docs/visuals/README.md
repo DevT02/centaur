@@ -26,7 +26,7 @@ Use a synthetic Git repository with no private code. Build the current checkout,
 Capture these states in a 120-column terminal:
 
 - `centaur doctor --redact-paths` after core checks pass and optional clients are absent
-- `centaur --export --mode changed --task "Add input validation"`
+- `centaur task "Add input validation"`
 - `centaur --dry-run --file response.txt` with one small, valid patch
 
 Before keeping a capture:

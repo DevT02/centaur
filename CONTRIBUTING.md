@@ -4,7 +4,7 @@ Thanks for improving The Clipboard Centaur. The project is intentionally local-f
 
 ## Start here
 
-Install [Git](https://git-scm.com/downloads) and [rustup](https://www.rust-lang.org/tools/install), then run:
+Install [Git](https://git-scm.com/downloads), [rustup](https://www.rust-lang.org/tools/install), and [Node.js 22](https://nodejs.org/), then run:
 
 ```sh
 git clone https://github.com/DevT02/centaur.git
@@ -27,7 +27,9 @@ For a first contribution, documentation, error recovery text, focused regression
 | Patch parsing and safe writes | `src/lib.rs`, `src/patch.rs` | `tests/intricate_edge_cases.rs`, `tests/regressions.rs` |
 | Review and undo | `src/review.rs`, `src/history.rs` | Unit tests and `tests/regressions.rs` |
 | Interactive terminal | `src/ui.rs` | Unit tests plus manual keyboard checks |
+| Project check detection | `src/verification.rs` | Unit tests in the same file |
 | MCP and client setup | `src/mcp.rs`, `src/skill.rs`, `src/doctor.rs` | Unit tests in each module |
+| VS Code extension | `editors/vscode/` | `node editors/vscode/extension.test.js` |
 
 Read [the architecture guide](docs/ARCHITECTURE.md) before changing shared parsing, export, patch, history, or MCP behavior. Its safety invariants are acceptance criteria, not implementation suggestions.
 
@@ -53,6 +55,8 @@ Run the same checks as CI before opening a pull request:
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-targets --locked
+node --check editors/vscode/extension.js
+node editors/vscode/extension.test.js
 ```
 
 Do not mix a repository-wide formatting rewrite into an unrelated behavior change.

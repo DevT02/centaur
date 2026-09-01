@@ -81,6 +81,24 @@ pub(crate) struct Args {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
+    /// Prepare project context for an AI-assisted change.
+    Task {
+        /// Include the full project even when Git has current changes.
+        #[arg(long)]
+        full: bool,
+        /// Strip detected credentials from the exported copy.
+        #[arg(long)]
+        redact: bool,
+        /// What you want the AI to change. Omit to enter it interactively.
+        #[arg(num_args = 0..)]
+        description: Vec<String>,
+    },
+    /// Show project checks, or run them after explicit approval.
+    Check {
+        /// Run the detected commands. Repository scripts may execute arbitrary code.
+        #[arg(long)]
+        run: bool,
+    },
     /// Manage the Centaur workflow prompt template.
     Prompt {
         #[command(subcommand)]
@@ -226,5 +244,86 @@ mod tests {
         assert!(help.contains("Export local repository context"), "{help}");
         assert!(help.contains("workspace-scoped MCP tools"), "{help}");
         assert!(help.contains("Search/Replace patch sets"), "{help}");
+        assert!(
+            help.contains("Prepare project context for an AI-assisted change"),
+            "{help}"
+        );
+    }
+
+    #[test]
+    fn task_description_accepts_multiple_words() {
+        let args = Args::try_parse_from(["centaur", "task", "add", "keyboard", "navigation"])
+            .expect("task command should parse");
+
+        match args.command {
+            Some(Commands::Task { description, .. }) => {
+                assert_eq!(description, ["add", "keyboard", "navigation"])
+            }
+            other => panic!("expected task command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_accepts_full_and_redact_options_after_the_subcommand() {
+        let args = Args::try_parse_from([
+            "centaur",
+            "task",
+            "review",
+            "configuration",
+            "--full",
+            "--redact",
+        ])
+        .expect("task options should parse");
+
+        match args.command {
+            Some(Commands::Task {
+                description,
+                full,
+                redact,
+            }) => {
+                assert!(full);
+                assert!(redact);
+                assert_eq!(description, ["review", "configuration"]);
+            }
+            other => panic!("expected task command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_help_is_not_swallowed_by_description() {
+        let error = Args::try_parse_from(["centaur", "task", "review", "configuration", "--help"])
+            .expect_err("--help should stop parsing and display task help");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(error.to_string().contains("--full"));
+    }
+
+    #[test]
+    fn task_help_explains_scope_and_redaction_options() {
+        let mut command = Args::command();
+        let task = command
+            .find_subcommand_mut("task")
+            .expect("task subcommand should exist");
+        let help = task.render_long_help().to_string();
+
+        assert!(help.contains("--full"), "{help}");
+        assert!(help.contains("Include the full project"), "{help}");
+        assert!(help.contains("--redact"), "{help}");
+        assert!(help.contains("Strip detected credentials"), "{help}");
+    }
+
+    #[test]
+    fn check_requires_an_explicit_run_option() {
+        let inspect = Args::try_parse_from(["centaur", "check"]).unwrap();
+        let execute = Args::try_parse_from(["centaur", "check", "--run"]).unwrap();
+
+        assert!(matches!(
+            inspect.command,
+            Some(Commands::Check { run: false })
+        ));
+        assert!(matches!(
+            execute.command,
+            Some(Commands::Check { run: true })
+        ));
     }
 }

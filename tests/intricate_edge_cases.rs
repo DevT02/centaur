@@ -90,6 +90,10 @@ fn utf8_bom_file_is_patched_successfully() {
     );
 
     let patched = fs::read_to_string(&file_path).unwrap();
+    assert!(
+        patched.starts_with('\u{FEFF}'),
+        "UTF-8 BOM must be preserved"
+    );
     assert!(patched.contains("hello world!"));
 }
 
@@ -392,6 +396,30 @@ fn fuzzy_matcher_tolerates_slight_indentation_differences() {
 
     let updated = fs::read_to_string(&file_path).unwrap();
     assert!(updated.contains("let val = 100;"));
+}
+
+#[test]
+fn fuzzy_match_preserves_crlf_line_endings() {
+    use_scratch_home();
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("fuzzy_crlf.rs");
+    fs::write(&file_path, "fn value() {\r\n    old();\r\n}\r\n").unwrap();
+
+    apply_blocks_transactional(
+        dir.path(),
+        &[PatchBlock {
+            file_path: "fuzzy_crlf.rs".to_string(),
+            search: "fn value() {\n  old();\n}".to_string(),
+            replace: "fn value() {\n    new();\n}".to_string(),
+        }],
+        false,
+    )
+    .unwrap();
+
+    let patched = fs::read_to_string(file_path).unwrap();
+    assert!(patched.contains("new();"));
+    assert!(patched.contains("\r\n"));
+    assert!(!patched.replace("\r\n", "").contains('\n'));
 }
 
 // -----------------------------------------------------------------------------

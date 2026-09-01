@@ -12,7 +12,7 @@ use std::process::{Command, ExitCode, Stdio};
 use sysinfo::System;
 use the_clipboard_centaur::config::CentaurConfig;
 use the_clipboard_centaur::export;
-use the_clipboard_centaur::git::ExportMode;
+use the_clipboard_centaur::git::{ExportMode, has_worktree_changes, is_git_repo};
 use the_clipboard_centaur::pack::PackOptions;
 use the_clipboard_centaur::patch::{
     ApplyResult, apply_blocks_transactional, apply_planned_transactional, plan_blocks_transactional,
@@ -20,6 +20,7 @@ use the_clipboard_centaur::patch::{
 use the_clipboard_centaur::prompt::{
     handle_prompt_copy, handle_prompt_edit, handle_prompt_reset, handle_prompt_show,
 };
+use the_clipboard_centaur::verification;
 use the_clipboard_centaur::{
     PatchPayload, parse_patch_payload, render_patch_plan, summarize_patch_blocks,
 };
@@ -164,6 +165,41 @@ fn generate_session_id() -> String {
     format!("{:08x}", (nanos & 0xffff_ffff))
 }
 
+fn guided_export_mode(is_git: bool, has_changes: bool, force_full: bool) -> ExportMode {
+    if !force_full && is_git && has_changes {
+        ExportMode::Changed
+    } else {
+        ExportMode::Full
+    }
+}
+
+fn read_task_description(words: &[String]) -> Result<String, String> {
+    let description = words.join(" ").trim().to_string();
+    if !description.is_empty() {
+        return Ok(description);
+    }
+    if !io::stdin().is_terminal() {
+        return Err(
+            "No task description was provided. Run 'centaur task <what to change>'.".to_string(),
+        );
+    }
+
+    print!("What should the AI change? ");
+    io::stdout()
+        .flush()
+        .map_err(|error| format!("Could not prompt for the task: {error}"))?;
+    let mut description = String::new();
+    io::stdin()
+        .read_line(&mut description)
+        .map_err(|error| format!("Could not read the task: {error}"))?;
+    let description = description.trim().to_string();
+    if description.is_empty() {
+        Err("No task description was provided.".to_string())
+    } else {
+        Ok(description)
+    }
+}
+
 fn print_patch_plan(blocks: &[the_clipboard_centaur::PatchBlock]) {
     println!("\nValidated patch plan:");
     for summary in summarize_patch_blocks(blocks) {
@@ -211,12 +247,68 @@ fn main() -> ExitCode {
     #[cfg(windows)]
     let _ = colored::control::set_virtual_terminal(true);
 
-    let args = Args::parse();
+    let mut args = Args::parse();
     let config = CentaurConfig::load();
     let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let is_guided_task = matches!(args.command.as_ref(), Some(Commands::Task { .. }));
+
+    if let Some(Commands::Task {
+        description,
+        full,
+        redact,
+    }) = args.command.as_ref()
+    {
+        let force_full = *full;
+        let redact = *redact;
+        let description = match read_task_description(description) {
+            Ok(description) => description,
+            Err(error) => {
+                eprintln!("❌ {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let mode = guided_export_mode(
+            is_git_repo(&current_dir),
+            has_worktree_changes(&current_dir),
+            force_full,
+        );
+        match mode {
+            ExportMode::Changed => println!("Context: changed files"),
+            ExportMode::Full => println!("Context: full project"),
+            _ => unreachable!(),
+        }
+        args.command = None;
+        args.export = Some(vec![".".to_string()]);
+        args.mode = mode;
+        args.task = Some(description);
+        args.redact |= redact;
+    }
 
     if let Some(cmd) = args.command {
         return match cmd {
+            Commands::Task { .. } => unreachable!("guided task command is normalized above"),
+            Commands::Check { run } => {
+                let checks = verification::detect(&current_dir);
+                if checks.is_empty() {
+                    println!("No known project checks were detected.");
+                    return ExitCode::SUCCESS;
+                }
+                println!("Detected project checks:");
+                for description in verification::describe(&checks) {
+                    println!("  - {description}");
+                }
+                if !run {
+                    println!(
+                        "\nThese commands come from the project and may execute arbitrary code. Inspect them, then run 'centaur check --run' to continue."
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                if verification::run_all(&current_dir, &checks) {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
             Commands::Prompt { action } => {
                 let outcome = match action {
                     PromptAction::Show => {
@@ -467,6 +559,10 @@ fn main() -> ExitCode {
             .to_string();
 
         let files_to_pack = export::collect_files(&root_dir, mode, &paths);
+        if is_guided_task && files_to_pack.is_empty() {
+            eprintln!("❌ No exportable files found for the selected context.");
+            return ExitCode::FAILURE;
+        }
         let secret_warnings = export::scan_files(&files_to_pack);
 
         if !secret_warnings.is_empty() {
@@ -574,7 +670,7 @@ fn main() -> ExitCode {
             println!("3. Send the message.");
 
             println!("\n--- WHEN THE AI REPLIES ---");
-            println!("4. Copy the complete AI response (the Centaur patch payload).");
+            println!("4. Copy the complete AI response.");
             println!("5. Run 'centaur' again, then review and approve the proposed changes.");
 
             if config.export.open_export_directory {
@@ -613,7 +709,7 @@ fn main() -> ExitCode {
 
             println!("\n--- WHEN THE AI REPLIES ---");
             println!(
-                "{}. Copy the complete AI response (the Centaur patch payload).",
+                "{}. Copy the complete AI response.",
                 result.summary.total_batches + 2
             );
             println!(
@@ -804,5 +900,18 @@ fn main() -> ExitCode {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guided_context_uses_changed_only_for_dirty_git_projects() {
+        assert_eq!(guided_export_mode(true, true, false), ExportMode::Changed);
+        assert_eq!(guided_export_mode(true, false, false), ExportMode::Full);
+        assert_eq!(guided_export_mode(false, true, false), ExportMode::Full);
+        assert_eq!(guided_export_mode(true, true, true), ExportMode::Full);
     }
 }

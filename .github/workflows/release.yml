@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Match release versions
+        shell: bash
+        run: |
+          manifest_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          extension_version="$(jq -r '.version' editors/vscode/package.json)"
+          test "${GITHUB_REF_NAME}" = "v${manifest_version}"
+          test "${extension_version}" = "${manifest_version}"
+      - run: cargo test --all-targets --locked
+
+  binary:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            extension: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            extension: zip
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            extension: tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            extension: tar.gz
+    env:
+      ARCHIVE_NAME: centaur-${{ github.ref_name }}-${{ matrix.target }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Smoke-test Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: 'target/${TARGET}/release/centaur --help'
+      - name: Smoke-test Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& "target/$env:TARGET/release/centaur.exe" --help'
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "dist/${ARCHIVE_NAME}"
+          cp "target/${TARGET}/release/centaur" "dist/${ARCHIVE_NAME}/centaur"
+          cp README.md LICENSE "dist/${ARCHIVE_NAME}/"
+          tar -C dist -czf "dist/${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "dist/$env:ARCHIVE_NAME"
+          Copy-Item "target/$env:TARGET/release/centaur.exe" "dist/$env:ARCHIVE_NAME/centaur.exe"
+          Copy-Item README.md, LICENSE "dist/$env:ARCHIVE_NAME/"
+          Compress-Archive -Path "dist/$env:ARCHIVE_NAME" -DestinationPath "dist/$env:ARCHIVE_NAME.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: dist/${{ env.ARCHIVE_NAME }}.${{ matrix.extension }}
+          if-no-files-found: error
+
+  vscode:
+    name: Package VS Code extension
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Check extension JavaScript
+        run: node --check extension.js
+        working-directory: editors/vscode
+      - name: Test extension behavior
+        run: node extension.test.js
+        working-directory: editors/vscode
+      - name: Build VSIX
+        run: npx --yes @vscode/vsce@3.9.2 package --out "../../dist/centaur-vscode-${GITHUB_REF_NAME}.vsix"
+        working-directory: editors/vscode
+      - uses: actions/upload-artifact@v7
+        with:
+          name: centaur-vscode-${{ github.ref_name }}
+          path: dist/centaur-vscode-${{ github.ref_name }}.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [binary, vscode]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Create release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes dist/*

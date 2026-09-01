@@ -2,12 +2,14 @@
 
 ## The workflow
 
-Centaur has two halves: export context for a browser-based AI, then validate and apply the AI's response locally.
+Centaur has two halves: prepare context for a browser-based AI, then review and make the AI's proposed changes locally.
 
 ```sh
 cd path/to/your/project
-centaur --export --mode changed --task "Describe the exact change"
+centaur task Describe the exact change
 ```
+
+`centaur task` automatically chooses changed and untracked files when the Git worktree has current changes, or the full project when it is clean or is not a Git repository. Its output includes one stable line showing `Context: changed files` or `Context: full project`.
 
 Paste the copied prompt into the AI conversation and attach every generated `centaur_context_part*.txt` file. If Centaur creates batch folders, send them in numeric order and wait for the model to acknowledge each batch.
 
@@ -18,12 +20,27 @@ centaur --dry-run --clipboard
 centaur --clipboard
 ```
 
-Use `centaur undo` to restore the latest patch session in the current workspace.
+Use `centaur undo` to restore the latest AI update in the current workspace.
+
+After applying an update, inspect the project checks Centaur recognizes:
+
+```sh
+centaur check
+centaur check --run
+```
+
+The first command only prints the plan. `--run` is explicit because package
+scripts and test configuration are repository code and may execute arbitrary
+programs. The interactive apply workflow presents the same commands and uses a
+default-no confirmation.
 
 ## Choosing context
 
 | Goal | Command |
 | --- | --- |
+| Let Centaur choose current changes or the full project | `centaur task "Fix issue #42"` |
+| Force the guided task to use the full project | `centaur task --full "Fix issue #42"` |
+| Redact likely secrets in a guided task export | `centaur task --redact "Fix issue #42"` |
 | Send the full repository | `centaur --export` |
 | Send current Git work | `centaur --export --mode changed` |
 | Send only staged files | `centaur --export --mode staged` |
@@ -59,7 +76,7 @@ fn new() {}
 
 To create a file, leave `SEARCH` empty. Search text should be unique and include enough surrounding context to match only once.
 
-Before writing, Centaur validates the complete payload, rejects malformed blocks and ambiguous or unsafe paths, shows the exact computed diff, and asks for confirmation. If any block fails parsing or validation, none of the planned blocks are written. The writer also rejects source files changed after review. An exact `NO_CHANGES` response is a successful no-op. `--dry-run` performs the same planning and diff rendering without modifying the workspace or history.
+Before writing, Centaur validates the complete payload and rejects malformed blocks and ambiguous or unsafe paths. The interactive menu shows a deterministic file and line summary first, then offers the exact code changes as an optional detail before a default-no confirmation. If any block fails parsing or validation, none of the planned blocks are written. The writer also rejects source files changed after review. If a later file-system write fails, Centaur automatically uses the undo snapshot to restore files already written; if recovery itself fails, the error names the exact snapshot command to run after inspecting the workspace. An exact `NO_CHANGES` response is a successful no-op. `--dry-run` performs the same planning and exact diff rendering without modifying the workspace or history.
 
 Piped input cannot answer an interactive prompt. Use `--yes` only after the producer and payload have been reviewed, or use `--dry-run` for a side-effect-free check:
 

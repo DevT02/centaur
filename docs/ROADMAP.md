@@ -15,6 +15,8 @@ backlog are maintained in [USER_WORKFLOWS.md](USER_WORKFLOWS.md).
 - **Trustworthy Patch Review**: Complete-payload parsing, successful `NO_CHANGES` handling, exact diff approval, source-drift rejection, drift-safe undo, and first-class standard input.
 - **Contributor Quality Gate**: Cross-platform locked tests plus enforced Rustfmt and warning-free Clippy checks.
 - **Contributor Onboarding**: A runnable setup path, code and test map, issue forms, pull request checklist, security reporting path, and reproducible visual-source guidance.
+- **Guided Activation**: `centaur task` chooses context, the terminal and VS Code surfaces use progressive review, and `centaur check` detects manifest-backed verification commands without running them implicitly.
+- **Release Build Automation**: Version tags validate against `Cargo.toml`, build four native binary archives and a VSIX, generate SHA-256 checksums, and create a GitHub release.
 
 ## Active Priorities
 
@@ -28,7 +30,10 @@ Enhance the Search/Replace matcher to handle subtle line-wrapping, trailing whit
 
 ### 3. Prebuilt Multi-Platform Binary Releases
 
-Automate GitHub Actions release matrix for prebuilt binaries (Windows x86_64, macOS ARM64/x86_64, Linux x86_64) and package the VS Code extension for the Visual Studio Marketplace (`vsce package`).
+Run the first controlled version tag through the prepared release workflow,
+inspect each downloaded artifact on its target platform, and then decide whether
+to add signing and Marketplace publication. The workflow already builds Windows
+x86_64, macOS ARM64/x86_64, Linux x86_64, checksums, and a packaged VSIX.
 
 Before publishing a release:
 

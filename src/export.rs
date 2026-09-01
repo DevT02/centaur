@@ -312,6 +312,23 @@ mod tests {
     }
 
     #[test]
+    fn collect_excludes_gitignored_private_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), ".private/\n").unwrap();
+        fs::create_dir(dir.path().join(".private")).unwrap();
+        fs::write(dir.path().join(".private").join("ISSUES.md"), "private").unwrap();
+        fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+
+        let files = collect_files(dir.path(), ExportMode::Full, &[]);
+
+        assert!(files.iter().any(|path| path.ends_with("main.rs")));
+        assert!(
+            files.iter().all(|path| !path.ends_with("ISSUES.md")),
+            "gitignored private file leaked into export: {files:?}"
+        );
+    }
+
+    #[test]
     fn redaction_keeps_secrets_out_of_the_export() {
         let dir = tempdir().unwrap();
         fs::write(
