@@ -368,6 +368,7 @@ fn task_returns_failure_when_the_export_cannot_be_written() {
         .env("CENTAUR_HOME", home.path())
         .env("TEMP", &blocked_temp)
         .env("TMP", &blocked_temp)
+        .env("TMPDIR", &blocked_temp)
         .env("NO_COLOR", "1")
         .output()
         .unwrap();

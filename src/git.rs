@@ -35,9 +35,10 @@ pub fn has_worktree_changes(root: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn contained_file(root: &Path, candidate: PathBuf) -> Option<PathBuf> {
+fn contained_file(root: &Path, canonical_root: &Path, candidate: PathBuf) -> Option<PathBuf> {
     let canonical = candidate.canonicalize().ok()?;
-    (canonical.is_file() && canonical.starts_with(root)).then_some(candidate)
+    let relative = canonical.strip_prefix(canonical_root).ok()?;
+    canonical.is_file().then(|| root.join(relative))
 }
 
 fn repository_root(root: &Path) -> Option<PathBuf> {
@@ -98,7 +99,8 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
 
             // Porcelain `-z` reports paths relative to the repository root, even
             // when Git runs from a nested workspace.
-            let Some(p) = contained_file(&canonical_root, repository_root.join(path_str)) else {
+            let Some(p) = contained_file(root, &canonical_root, repository_root.join(path_str))
+            else {
                 continue;
             };
             if !files.contains(&p) {
@@ -116,7 +118,7 @@ pub fn get_changed_files(root: &Path) -> Vec<PathBuf> {
         "Makefile",
     ];
     for m in manifests {
-        let Some(p) = contained_file(&canonical_root, root.join(m)) else {
+        let Some(p) = contained_file(root, &canonical_root, root.join(m)) else {
             continue;
         };
         if !files.contains(&p) {
@@ -142,7 +144,7 @@ pub fn get_staged_files(root: &Path) -> Vec<PathBuf> {
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for path in stdout.split('\0').filter(|path| !path.is_empty()) {
-            let Some(p) = contained_file(&canonical_root, repository_root.join(path)) else {
+            let Some(p) = contained_file(root, &canonical_root, repository_root.join(path)) else {
                 continue;
             };
             if !files.contains(&p) {
@@ -153,7 +155,7 @@ pub fn get_staged_files(root: &Path) -> Vec<PathBuf> {
 
     let manifests = ["Cargo.toml", "package.json", "pyproject.toml", "README.md"];
     for m in manifests {
-        let Some(p) = contained_file(&canonical_root, root.join(m)) else {
+        let Some(p) = contained_file(root, &canonical_root, root.join(m)) else {
             continue;
         };
         if !files.contains(&p) {
